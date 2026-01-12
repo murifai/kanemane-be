@@ -17,12 +17,20 @@ class AssetController extends Controller
         $user = $request->user();
         
         // Get personal assets
-        $personalAssets = $user->personalAssets()->get();
+        $personalAssets = $user->personalAssets()->get()->map(function ($asset) use ($user) {
+            $asset->is_primary_jpy = $asset->id === $user->primary_asset_jpy_id;
+            $asset->is_primary_idr = $asset->id === $user->primary_asset_idr_id;
+            return $asset;
+        });
         
         // Get family assets
         $familyAssets = collect();
         foreach ($user->families as $family) {
-            $familyAssets = $familyAssets->merge($family->assets);
+            $familyAssets = $familyAssets->merge($family->assets->map(function ($asset) use ($user) {
+                $asset->is_primary_jpy = $asset->id === $user->primary_asset_jpy_id;
+                $asset->is_primary_idr = $asset->id === $user->primary_asset_idr_id;
+                return $asset;
+            }));
         }
         
         return response()->json([

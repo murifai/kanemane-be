@@ -26,6 +26,8 @@ class User extends Authenticatable
         'avatar',
         'language',
         'primary_asset_id',
+        'primary_asset_jpy_id',
+        'primary_asset_idr_id',
     ];
 
     /**
@@ -72,6 +74,26 @@ class User extends Authenticatable
     public function primaryAsset()
     {
         return $this->belongsTo(Asset::class, 'primary_asset_id');
+    }
+    
+    public function primaryAssetJpy()
+    {
+        return $this->belongsTo(Asset::class, 'primary_asset_jpy_id');
+    }
+    
+    public function primaryAssetIdr()
+    {
+        return $this->belongsTo(Asset::class, 'primary_asset_idr_id');
+    }
+    
+    public function getPrimaryAssetForCurrency(string $currency)
+    {
+        if ($currency === 'JPY') {
+            return $this->primary_asset_jpy_id;
+        } elseif ($currency === 'IDR') {
+            return $this->primary_asset_idr_id;
+        }
+        return null;
     }
     
     public function expenses()

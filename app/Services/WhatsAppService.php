@@ -326,7 +326,7 @@ class WhatsAppService
 
         // Check if user has completed onboarding
         $hasAssets = $user->personalAssets()->exists();
-        $hasPrimaryAsset = $user->primary_asset_id !== null;
+        $hasPrimaryAsset = $user->primary_asset_jpy_id !== null || $user->primary_asset_idr_id !== null;
 
         if (!$hasAssets || !$hasPrimaryAsset) {
             $onboardingUrl = config('app.frontend_url') . '/onboarding';
@@ -442,7 +442,9 @@ class WhatsAppService
                 default => $a->currency . ' '
             };
             
-            $isPrimary = $a->id === $user->primary_asset_id ? ' 🌟' : '';
+            $isPrimaryJpy = $a->id === $user->primary_asset_jpy_id;
+            $isPrimaryIdr = $a->id === $user->primary_asset_idr_id;
+            $isPrimary = ($isPrimaryJpy || $isPrimaryIdr) ? ' 🌟' : '';
             $message .= "• {$a->name}{$isPrimary}: {$currencySymbol}" . number_format($a->balance, 0, ',', '.') . "\n";
             
             // Sum by currency
@@ -497,7 +499,9 @@ class WhatsAppService
             $total = 0;
             
             foreach ($assets as $a) {
-                $isPrimary = $a->id === $user->primary_asset_id ? ' 🌟' : '';
+                $isPrimaryJpy = $a->id === $user->primary_asset_jpy_id;
+                $isPrimaryIdr = $a->id === $user->primary_asset_idr_id;
+                $isPrimary = ($isPrimaryJpy || $isPrimaryIdr) ? ' 🌟' : '';
                 $message .= "• {$a->name}{$isPrimary}: {$currencySymbol}" . number_format($a->balance, 0, ',', '.') . "\n";
                 $total += $a->balance;
             }
@@ -544,17 +548,25 @@ class WhatsAppService
         }
         
         $message = "🏦 *Dompet Utama*\n\n";
-        $message .= "Dompet utama saat ini: ";
         
-        if ($user->primary_asset_id) {
-            $primaryAsset = $user->primaryAsset;
-            $message .= "*{$primaryAsset->name}* 🌟\n\n";
+        // Show JPY primary wallet
+        if ($user->primary_asset_jpy_id) {
+            $primaryJpy = $user->primaryAssetJpy;
+            $message .= "JPY: *{$primaryJpy->name}* 🌟\n";
         } else {
-            $message .= "Belum diset\n\n";
+            $message .= "JPY: Belum diset\n";
         }
         
-        $message .= "Untuk mengganti dompet utama, silakan buka:\n";
-        $message .= config('app.frontend_url') . '/assets';
+        // Show IDR primary wallet
+        if ($user->primary_asset_idr_id) {
+            $primaryIdr = $user->primaryAssetIdr;
+            $message .= "IDR: *{$primaryIdr->name}* 🌟\n";
+        } else {
+            $message .= "IDR: Belum diset\n";
+        }
+        
+        $message .= "\nUntuk mengganti dompet utama, silakan buka:\n";
+        $message .= config('app.frontend_url') . '/dashboard/assets';
         
         $this->sendMessage($from, $message);
     }
@@ -597,8 +609,17 @@ class WhatsAppService
         }
 
         if (!$asset) {
-            // Use primary asset
-            $asset = $user->primaryAsset;
+            // Use primary asset based on parsed currency
+            if ($parsed['currency'] === 'JPY' && $user->primary_asset_jpy_id) {
+                $asset = $user->primaryAssetJpy;
+            } elseif ($parsed['currency'] === 'IDR' && $user->primary_asset_idr_id) {
+                $asset = $user->primaryAssetIdr;
+            } else {
+                // Fallback: try to find any asset with matching currency
+                $asset = $user->personalAssets()
+                    ->where('currency', $parsed['currency'])
+                    ->first();
+            }
         }
         
         if (!$asset) {

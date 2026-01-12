@@ -7,6 +7,7 @@ use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\SubscriptionController;
+use App\Http\Controllers\ReportController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -81,4 +82,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('subscription/checkout', [SubscriptionController::class, 'checkout']);
     Route::get('subscription/status/{orderId}', [SubscriptionController::class, 'checkStatus']);
     Route::post('subscription/cancel', [SubscriptionController::class, 'cancel']);
+
+    // Reports
+    Route::get('reports/export', [ReportController::class, 'export']);
 });
