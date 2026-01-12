@@ -589,6 +589,13 @@ class WhatsAppService
                 ->first();
         }
         
+        // If asset not found by name, try to find by currency if explicitly mentioned
+        if (!$asset && $parsed['currency']) {
+             $asset = $user->personalAssets()
+                ->where('currency', $parsed['currency'])
+                ->first();
+        }
+
         if (!$asset) {
             // Use primary asset
             $asset = $user->primaryAsset;
@@ -599,24 +606,36 @@ class WhatsAppService
             return;
         }
 
-        // Check for currency mismatch
-        if ($parsed['currency'] !== $asset->currency) {
-            $this->handleCurrencyMismatch($text, $user, $from, $parsed, $asset);
-            return;
-        }
-
-        // Create transaction
-        $this->createTransaction($user, $asset, $parsed, $from);
+        // Always ask for confirmation as requested
+        $this->confirmTransaction($text, $user, $from, $parsed, $asset);
     }
 
     /**
-     * Handle currency mismatch - ask for confirmation
+     * Ask for confirmation before creating transaction
      */
-    private function handleCurrencyMismatch(string $originalText, User $user, string $from, array $parsed, Asset $asset): void
+    private function confirmTransaction(string $originalText, User $user, string $from, array $parsed, Asset $asset): void
     {
-        $message = "⚠️ *Peringatan Currency Mismatch*\n\n";
-        $message .= "Kamu menyebutkan *{$parsed['currency']}* tapi asset *{$asset->name}* menggunakan *{$asset->currency}*.\n\n";
-        $message .= "Apakah maksud kamu {$parsed['amount']} {$asset->currency}?";
+        $currencySymbol = match($parsed['currency']) {
+            'JPY' => '¥',
+            'IDR' => 'Rp',
+            'USD' => '$',
+            default => $parsed['currency'] . ' '
+        };
+
+        $typeLabel = $parsed['type'] === 'income' ? 'Pemasukan' : 'Pengeluaran';
+        
+        $message = "📝 *Konfirmasi Transaksi*\n\n";
+        $message .= "Tipe: {$typeLabel}\n";
+        $message .= "Item: {$parsed['description']}\n";
+        $message .= "Jumlah: {$currencySymbol}" . number_format($parsed['amount'], 0, ',', '.') . "\n";
+        $message .= "Kategori: {$parsed['category']}\n";
+        $message .= "Asset: {$asset->name} ({$asset->currency})\n\n";
+        
+        if ($parsed['currency'] !== $asset->currency) {
+            $message .= "⚠️ *Perhatian*: Mata uang transaksi ({$parsed['currency']}) beda dengan asset ({$asset->currency}).\n\n";
+        }
+        
+        $message .= "Apakah data ini benar?";
         
         // Store pending transaction for confirmation
         cache()->put("pending_transaction_{$from}", [
@@ -629,18 +648,20 @@ class WhatsAppService
         $this->sendButtons($from, $message, [
             [
                 'reply' => [
-                    'id' => 'confirm_currency',
-                    'title' => '✅ Ya, benar'
+                    'id' => 'confirm_transaction',
+                    'title' => '✅ Ya, Benar'
                 ]
             ],
             [
                 'reply' => [
-                    'id' => 'cancel_currency',
+                    'id' => 'cancel_transaction',
                     'title' => '❌ Batal'
                 ]
             ]
         ]);
     }
+
+
 
     /**
      * Create transaction (income or expense)
@@ -779,7 +800,12 @@ class WhatsAppService
             // Store scan result temporarily for confirmation
             cache()->put("whatsapp_receipt_{$from}", $scanResult, now()->addMinutes(5));
 
-            $currencySymbol = '¥'; // Default to JPY for receipts
+            $detectedCurrency = $scanResult['currency'] ?? 'JPY';
+            $currencySymbol = match($detectedCurrency) {
+                'IDR' => 'Rp',
+                'USD' => '$',
+                default => '¥'
+            };
 
             // Send confirmation with buttons
             $message = "📄 *Struk terdeteksi!*\n\n" .
@@ -843,8 +869,14 @@ class WhatsAppService
                 return;
             }
 
-            // Get user's primary asset
-            $asset = $user->primaryAsset;
+            // Attempt to find asset matching receipt currency
+            $detectedCurrency = $scanResult['currency'] ?? 'JPY';
+            $asset = $user->personalAssets()->where('currency', $detectedCurrency)->first();
+
+            if (!$asset) {
+                // Fallback to primary asset
+                $asset = $user->primaryAsset;
+            }
 
             if (!$asset) {
                 $this->sendMessage($from, "❌ Anda belum set dompet utama. Gunakan perintah /dompet");
@@ -899,8 +931,7 @@ class WhatsAppService
         } elseif ($buttonId === 'cancel_receipt') {
             cache()->forget("whatsapp_receipt_{$from}");
             $this->sendMessage($from, "❌ Pengeluaran dibatalkan.");
-        } elseif ($buttonId === 'confirm_currency') {
-            // ... existing confirm_currency logic ...
+        } elseif ($buttonId === 'confirm_transaction') {
             $pending = cache()->get("pending_transaction_{$from}");
             
             if (!$pending) {
@@ -912,7 +943,7 @@ class WhatsAppService
             $asset = Asset::find($pending['asset_id']);
             $parsed = $pending['parsed'];
             
-            // Override currency with asset currency
+            // Override currency with asset currency to ensure consistency
             $parsed['currency'] = $asset->currency;
             
             // Create transaction
@@ -920,7 +951,7 @@ class WhatsAppService
             
             // Clear cache
             cache()->forget("pending_transaction_{$from}");
-        } elseif ($buttonId === 'cancel_currency') {
+        } elseif ($buttonId === 'cancel_transaction') {
             cache()->forget("pending_transaction_{$from}");
             $this->sendMessage($from, "❌ Transaksi dibatalkan.");
         }
@@ -1001,14 +1032,14 @@ class WhatsAppService
             }
         }
         
-        // Check for currency mismatch confirmation
+        // Check for transaction confirmation
         if (cache()->has("pending_transaction_{$from}")) {
             if (in_array($normalizedText, ['1', 'ya', 'yes', 'y', 'benar'])) {
-                $this->handleButtonReply('confirm_currency', $user, $from);
+                $this->handleButtonReply('confirm_transaction', $user, $from);
                 return true;
             }
             if (in_array($normalizedText, ['2', 'tidak', 'no', 'n', 'batal'])) {
-                $this->handleButtonReply('cancel_currency', $user, $from);
+                $this->handleButtonReply('cancel_transaction', $user, $from);
                 return true;
             }
         }

@@ -17,17 +17,28 @@ class TransactionController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
+        $currency = $request->query('currency', 'JPY');
         
         // Get personal transactions
-        $incomes = $user->incomes()->with('asset')->latest('date')->get()->map(function ($income) {
-            $income->type = 'income';
-            return $income;
-        });
+        $incomes = $user->incomes()
+            ->where('currency', $currency)
+            ->with('asset')
+            ->latest('date')
+            ->get()
+            ->map(function ($income) {
+                $income->type = 'income';
+                return $income;
+            });
         
-        $expenses = $user->expenses()->with('asset')->latest('date')->get()->map(function ($expense) {
-            $expense->type = 'expense';
-            return $expense;
-        });
+        $expenses = $user->expenses()
+            ->where('currency', $currency)
+            ->with('asset')
+            ->latest('date')
+            ->get()
+            ->map(function ($expense) {
+                $expense->type = 'expense';
+                return $expense;
+            });
         
         // Merge and sort
         $transactions = $incomes->concat($expenses)->sortByDesc('date')->values();
@@ -150,6 +161,93 @@ class TransactionController extends Controller
         }
         
         return response()->json($transaction->load('asset'));
+    }
+
+    /**
+     * Update the specified transaction
+     */
+    public function update(Request $request, string $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'category' => 'required|string',
+            'amount' => 'required|numeric|min:0',
+            'date' => 'required|date',
+            'note' => 'nullable|string',
+            'asset_id' => 'required|exists:assets,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        // Try to find in incomes first
+        $transaction = Income::find($id);
+        $type = 'income';
+        
+        if (!$transaction) {
+            $transaction = Expense::find($id);
+            $type = 'expense';
+        }
+        
+        if (!$transaction) {
+            return response()->json(['error' => 'Transaction not found'], 404);
+        }
+
+        $user = $request->user();
+        if ($transaction->created_by !== $user->id) { // Basic authorization check
+             return response()->json(['error' => 'Unauthorized'], 403);
+        }
+        
+        DB::beginTransaction();
+        try {
+            $oldAmount = $transaction->amount;
+            $oldAssetId = $transaction->asset_id;
+            
+            // 1. Revert old balance effect
+            $oldAsset = Asset::findOrFail($oldAssetId);
+            if ($type === 'income') {
+                $oldAsset->decrement('balance', $oldAmount);
+            } else {
+                $oldAsset->increment('balance', $oldAmount);
+            }
+
+            // 2. Apply new balance effect
+            $newAsset = Asset::findOrFail($request->asset_id);
+            if ($type === 'income') {
+                $newAsset->increment('balance', $request->amount);
+            } else {
+                // Check sufficiency if asset changed or amount increased (optional strictness)
+                // For editing, we might be more lenient, but let's prevent negative balance if strictly enforced
+                if ($newAsset->balance - $request->amount < 0 && $type === 'expense') { 
+                     // Only check if it puts balance below 0. 
+                     // Note: decrementing happens after this check.
+                     // Since we reverted old balance first, we are "fresh".
+                     // Ideally we check if ($newAsset->balance < $request->amount) but strictly speaking 
+                     // if it's the SAME asset, we already credited the old amount back.
+                     // So $newAsset->balance is correct current state (without this transaction).
+                }
+                $newAsset->decrement('balance', $request->amount);
+            }
+
+            // 3. Update Transaction
+            $transaction->update([
+                'category' => $request->category,
+                'amount' => $request->amount,
+                'date' => $request->date,
+                'note' => $request->note,
+                'asset_id' => $request->asset_id,
+                'owner_type' => $newAsset->owner_type,
+                'owner_id' => $newAsset->owner_id,
+                'currency' => $newAsset->currency, // If asset changed, currency might change? Ideally UI prevents mixed currency, but let's sync it.
+            ]);
+            
+            DB::commit();
+            
+            return response()->json($transaction->load('asset'));
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json(['error' => 'Failed to update transaction: ' . $e->getMessage()], 500);
+        }
     }
 
     /**

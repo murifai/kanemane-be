@@ -38,7 +38,7 @@ class AssetController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'type' => 'required|in:tabungan,e-money,investasi',
+            'type' => 'required|in:tabungan,e-money,investasi,cash',
             'country' => 'required|in:JP,ID',
             'currency' => 'required|in:JPY,IDR',
             'balance' => 'required|numeric|min:0',
@@ -90,7 +90,7 @@ class AssetController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
-            'type' => 'sometimes|in:tabungan,e-money,investasi',
+            'type' => 'sometimes|in:tabungan,e-money,investasi,cash',
             'balance' => 'sometimes|numeric|min:0',
         ]);
         

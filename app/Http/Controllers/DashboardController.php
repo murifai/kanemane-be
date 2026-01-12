@@ -16,6 +16,7 @@ class DashboardController extends Controller
     public function summary(Request $request)
     {
         $user = $request->user();
+        $currency = $request->query('currency', 'JPY');
         
         // Get all user's assets (personal + family)
         $personalAssets = $user->personalAssets;
@@ -26,23 +27,25 @@ class DashboardController extends Controller
         $allAssets = $personalAssets->merge($familyAssets);
         
         // Calculate totals by currency
-        $totalJPY = $allAssets->where('currency', 'JPY')->sum('balance');
-        $totalIDR = $allAssets->where('currency', 'IDR')->sum('balance');
+        $totalAssets = $allAssets->where('currency', $currency)->sum('balance');
         
         // Get current month transactions
         $startOfMonth = now()->startOfMonth();
         $endOfMonth = now()->endOfMonth();
         
         $monthlyIncome = $user->incomes()
+            ->where('currency', $currency)
             ->whereBetween('date', [$startOfMonth, $endOfMonth])
             ->sum('amount');
             
         $monthlyExpense = $user->expenses()
+            ->where('currency', $currency)
             ->whereBetween('date', [$startOfMonth, $endOfMonth])
             ->sum('amount');
         
         // Get top expense category
         $topCategory = $user->expenses()
+            ->where('currency', $currency)
             ->whereBetween('date', [$startOfMonth, $endOfMonth])
             ->select('category', DB::raw('SUM(amount) as total'))
             ->groupBy('category')
@@ -50,29 +53,49 @@ class DashboardController extends Controller
             ->first();
 
         // Get recent transactions (limit 10)
-        $incomes = $user->incomes()->with('asset')->latest('date')->limit(10)->get()->map(function ($item) {
-            $data = $item->toArray();
-            $data['type'] = 'income';
-            return $data;
-        });
-        $expenses = $user->expenses()->with('asset')->latest('date')->limit(10)->get()->map(function ($item) {
-            $data = $item->toArray();
-            $data['type'] = 'expense';
-            return $data;
-        });
+        $incomes = $user->incomes()
+            ->where('currency', $currency)
+            ->with('asset')
+            ->latest('date')
+            ->limit(10)
+            ->get()
+            ->map(function ($item) {
+                $data = $item->toArray();
+                $data['type'] = 'income';
+                return $data;
+            });
+
+        $expenses = $user->expenses()
+            ->where('currency', $currency)
+            ->with('asset')
+            ->latest('date')
+            ->limit(10)
+            ->get()
+            ->map(function ($item) {
+                $data = $item->toArray();
+                $data['type'] = 'expense';
+                return $data;
+            });
 
         $recentTransactions = $incomes->concat($expenses)->sortByDesc('date')->take(10)->values();
         
+        // Get latest exchange rate (JPY -> IDR)
+        $exchangeRate = \App\Models\ExchangeRate::where('base_currency', 'JPY')
+            ->where('target_currency', 'IDR')
+            ->latest('date')
+            ->first();
+
         return response()->json([
             'user_name' => $user->name,
-            'total_assets_jpy' => $totalJPY,
-            'total_assets_idr' => $totalIDR,
+            'currency' => $currency,
+            'total_assets' => $totalAssets,
             'monthly_income' => $monthlyIncome,
             'monthly_expense' => $monthlyExpense,
             'balance' => $monthlyIncome - $monthlyExpense,
             'top_expense_category' => $topCategory->category ?? null,
             'recent_transactions' => $recentTransactions,
-            'goals' => [] 
+            'goals' => [],
+            'exchange_rate' => $exchangeRate ? (float)$exchangeRate->rate : 107, // Fallback to 107
         ]);
     }
 
@@ -82,6 +105,7 @@ class DashboardController extends Controller
     public function charts(Request $request)
     {
         $user = $request->user();
+        $currency = $request->query('currency', 'JPY');
         
         // Monthly trend (last 6 months)
         $monthlyTrend = [];
@@ -91,10 +115,12 @@ class DashboardController extends Controller
             $endOfMonth = $month->copy()->endOfMonth();
             
             $income = $user->incomes()
+                ->where('currency', $currency)
                 ->whereBetween('date', [$startOfMonth, $endOfMonth])
                 ->sum('amount');
                 
             $expense = $user->expenses()
+                ->where('currency', $currency)
                 ->whereBetween('date', [$startOfMonth, $endOfMonth])
                 ->sum('amount');
             
@@ -110,6 +136,7 @@ class DashboardController extends Controller
         $endOfMonth = now()->endOfMonth();
         
         $categoryBreakdown = $user->expenses()
+            ->where('currency', $currency)
             ->whereBetween('date', [$startOfMonth, $endOfMonth])
             ->select('category', DB::raw('SUM(amount) as amount'))
             ->groupBy('category')

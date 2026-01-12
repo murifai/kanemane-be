@@ -213,6 +213,7 @@ Return ONLY valid JSON in this exact format:
 
             return [
                 'amount' => (float) $parsed['total_amount'],
+                'currency' => $parsed['currency'] ?? 'JPY',
                 'date' => $parsed['date'] ?? now()->format('Y-m-d'),
                 'merchant' => $parsed['merchant'] ?? 'Unknown',
                 'category' => $parsed['category'] ?? 'その他',
