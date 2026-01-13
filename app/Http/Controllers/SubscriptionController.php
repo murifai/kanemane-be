@@ -44,6 +44,7 @@ class SubscriptionController extends Controller
             'success' => true,
             'data' => [
                 'has_subscription' => true,
+                'current_plan' => $subscription->plan,
                 'subscription' => $subscription,
                 'is_active' => $subscription->isActive(),
                 'is_expired' => $subscription->isExpired(),
