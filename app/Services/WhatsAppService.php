@@ -28,15 +28,27 @@ class WhatsAppService
     /**
      * Get HTTP client with API key header if configured
      */
+    /**
+     * Get HTTP client with API key header if configured
+     */
     private function getHttpClient()
     {
         $client = Http::timeout(30);
 
         if ($this->apiKey) {
             $client = $client->withHeaders([
-                'X-Api-Key' => $this->apiKey
+                'X-Api-Key' => $this->apiKey,
+                'accept' => 'application/json',
             ]);
         }
+
+        // Log configuration for debugging (masking API key)
+        Log::debug('WAHA: Client Configuration', [
+            'base_url' => $this->baseUrl,
+            'session' => $this->session,
+            'has_api_key' => !empty($this->apiKey),
+            'api_key_preview' => $this->apiKey ? substr($this->apiKey, 0, 4) . '***' : null
+        ]);
 
         return $client;
     }
@@ -66,21 +78,35 @@ class WhatsAppService
      */
     public function sendMessage(string $to, string $message): void
     {
+        $url = "{$this->baseUrl}/api/sessions/{$this->session}/text";
+        $payload = [
+            'chatId' => $this->formatChatId($to),
+            'text' => $message,
+            'session' => $this->session
+        ];
+
         try {
-            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sessions/{$this->session}/text", [
-                'chatId' => $this->formatChatId($to),
-                'text' => $message,
-                'session' => $this->session
+            Log::info('WAHA: Sending message', [
+                'url' => $url,
+                'to' => $to,
+                'payload' => $payload
             ]);
+
+            $response = $this->getHttpClient()->post($url, $payload);
 
             if (!$response->successful()) {
                 Log::error('WAHA: Failed to send message', [
-                    'to' => $to,
-                    'response' => $response->json()
+                    'url' => $url,
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                    'to' => $to
                 ]);
+            } else {
+                Log::info('WAHA: Message sent successfully');
             }
         } catch (\Exception $e) {
             Log::error('WAHA: Error sending message', [
+                'url' => $url,
                 'error' => $e->getMessage(),
                 'to' => $to
             ]);
@@ -201,8 +227,16 @@ class WhatsAppService
      */
     private function convertLidToPhone(string $lid): ?string
     {
+        // Use the contacts endpoint to fetch profile info including phone number
+        $url = "{$this->baseUrl}/api/sessions/{$this->session}/contacts/{$lid}";
+
         try {
-            $response = $this->getHttpClient()->get("{$this->baseUrl}/api/sessions/{$this->session}/contacts/{$lid}");
+            Log::info('WAHA: Converting LID to phone', [
+                'url' => $url,
+                'lid' => $lid
+            ]);
+
+            $response = $this->getHttpClient()->get($url);
             
             if ($response->successful()) {
                 $data = $response->json();
@@ -211,16 +245,20 @@ class WhatsAppService
                 $pn = $data['pn'] ?? null;
                 
                 if ($pn) {
-                    // Remove @c.us suffix to get just the phone number
-                    return str_replace('@c.us', '', $pn);
+                    $phone = str_replace('@c.us', '', $pn);
+                    Log::info('WAHA: LID converted successfully', ['lid' => $lid, 'phone' => $phone]);
+                    return $phone;
                 }
                 
+                Log::warning('WAHA: LID conversion response missing phone number', ['data' => $data]);
                 return null;
             }
             
             Log::warning('WAHA: Failed to convert LID to phone', [
+                'url' => $url,
+                'status' => $response->status(),
                 'lid' => $lid,
-                'response' => $response->json()
+                'response' => $response->body()
             ]);
             
             return null;
