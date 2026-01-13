@@ -60,7 +60,7 @@ class Subscription extends Model
     public static function getPlanPrice(string $plan): int
     {
         return match($plan) {
-            'basic' => 19000,  // Rp 19.000/month
+            'basic' => 24000,  // Rp 24.000/month
             'pro' => 49000,    // Rp 49.000/month
             default => 0,
         };

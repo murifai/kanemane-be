@@ -101,12 +101,8 @@ class SubscriptionController extends Controller
 
             $plan = $request->plan;
 
-            // Lynk.id URLs from env
-            $paymentUrl = match($plan) {
-                'basic' => env('LYNK_BASIC_URL'),
-                'pro' => env('LYNK_PRO_URL'),
-                default => null,
-            };
+            // Lynk.id URLs from config
+            $paymentUrl = config("services.lynk.urls.{$plan}");
 
             if (!$paymentUrl) {
                 return response()->json([

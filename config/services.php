@@ -61,4 +61,21 @@ return [
         'is_production' => env('MIDTRANS_IS_PRODUCTION', false),
     ],
 
+    'lynk' => [
+        'products' => [
+            'basic' => [
+                'amount' => 24000,
+                'plan_id' => 'basic',
+            ],
+            'pro' => [
+                'amount' => 49000,
+                'plan_id' => 'pro',
+            ],
+        ],
+        'urls' => [
+            'basic' => 'http://lynk.id/kanemane/xov5m9ovy8yy/checkout',
+            'pro' => 'http://lynk.id/kanemane/jvd1kz0oxknk/checkout',
+        ],
+    ],
+
 ];

@@ -68,15 +68,18 @@ class PaymentWebhookController extends Controller
         }
 
         // 6. Determine Plan
-        // Basic: 19000, Pro: 49000
         $paidAmount = (int)$amount;
         $plan = null;
+        $products = config('services.lynk.products', []);
 
-        if ($paidAmount >= 49000) {
-            $plan = 'pro';
-        } elseif ($paidAmount >= 19000) {
-            $plan = 'basic';
-        } else {
+        foreach ($products as $product) {
+            if ($paidAmount == $product['amount']) {
+                $plan = $product['plan_id'];
+                break;
+            }
+        }
+
+        if (!$plan) {
              Log::info("Lynk Webhook: Unknown amount {$paidAmount}, no plan matched.");
              return response()->json(['message' => 'Amount does not match any plan'], 200);
         }
