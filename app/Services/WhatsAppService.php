@@ -396,10 +396,27 @@ class WhatsAppService
             ]);
             
             // Try to find if the Real JID is already in the payload
-            // Some WAHA versions send it in _data -> id -> remote or similar
-            // But we will primarily rely on the API look up
+            // GOWS engine often sends it in _data -> Info -> SenderAlt
+            // Format: "6285175109501:18@s.whatsapp.net"
             
-            $convertedPhone = $this->convertLidToPhone($from);
+            $senderAlt = $message['_data']['Info']['SenderAlt'] ?? null;
+            if ($senderAlt) {
+                 // Remove @s.whatsapp.net and device ID part (:18)
+                 // Regex: Match numbers at start until non-digit
+                 if (preg_match('/^(\d+)/', $senderAlt, $matches)) {
+                     $extracted = $matches[1];
+                     Log::info('WAHA: Extracted phone from payload SenderAlt', [
+                         'sender_alt' => $senderAlt,
+                         'extracted' => $extracted
+                     ]);
+                     $convertedPhone = $extracted;
+                 }
+            }
+
+            // Fallback to API if payload extraction failed
+            if (empty($convertedPhone)) {
+                 $convertedPhone = $this->convertLidToPhone($from);
+            }
             
             if ($convertedPhone) {
                 Log::info('WAHA: Successfully converted LID to phone', [
