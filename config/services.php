@@ -43,8 +43,8 @@ return [
 
     'whatsapp' => [
         // WAHA Configuration
-        'waha_url' => env('WAHA_URL', 'http://localhost:3000'),
-        'waha_session' => env('WAHA_SESSION', 'kanemane-production'),
+        'waha_url' => env('WAHA_URL'),
+        'waha_session' => env('WAHA_SESSION'),
         'waha_api_key' => env('WAHA_API_KEY'),
         'webhook_secret' => env('WAHA_WEBHOOK_SECRET'),
 

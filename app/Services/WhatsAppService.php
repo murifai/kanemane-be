@@ -78,7 +78,7 @@ class WhatsAppService
      */
     public function sendMessage(string $to, string $message): void
     {
-        $url = "{$this->baseUrl}/api/sessions/{$this->session}/text";
+        $url = "{$this->baseUrl}/api/sendText";
         $payload = [
             'chatId' => $this->formatChatId($to),
             'text' => $message,
@@ -118,39 +118,48 @@ class WhatsAppService
      */
     public function sendButtons(string $to, string $text, array $buttons): void
     {
-        try {
-            // WAHA uses different button format
-            $wahaButtons = array_map(function($button, $index) {
-                return [
-                    'id' => $button['reply']['id'] ?? "btn_{$index}",
-                    'text' => $button['reply']['title'] ?? "Button {$index}"
-                ];
-            }, $buttons, array_keys($buttons));
+        // WAHA uses different button format
+        $wahaButtons = array_map(function($button, $index) {
+            return [
+                'id' => $button['reply']['id'] ?? "btn_{$index}",
+                'text' => $button['reply']['title'] ?? "Button {$index}"
+            ];
+        }, $buttons, array_keys($buttons));
 
-            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sessions/{$this->session}/buttons", [
+        // Use /api/sendButtons or similar if available, otherwise check docs.
+        // Assuming standard flat API is /api/sendButtons or legacy way.
+        // Actually, many lookalikes use /api/sendButtons.
+        
+        // However, based on the 404 on /api/sessions/..., we'll guess /api/sendButtons
+        // Best guess for now as we don't have docs.
+        
+        $url = "{$this->baseUrl}/api/sendButtons";
+
+        try {
+            $response = $this->getHttpClient()->post($url, [
                 'chatId' => $this->formatChatId($to),
                 'text' => $text,
                 'buttons' => $wahaButtons,
                 'session' => $this->session
             ]);
 
-        if (!$response->successful()) {
-            // Fallback for engines that don't support buttons (like WEBJS)
-            if ($response->status() === 501) {
-                $menuText = $text . "\n\n";
-                foreach ($buttons as $index => $button) {
-                    $menuText .= ($index + 1) . ". " . ($button['reply']['title'] ?? "Option {$index}") . "\n";
+            if (!$response->successful()) {
+                // Fallback for engines that don't support buttons (like WEBJS)
+                if ($response->status() === 501 || $response->status() === 404) {
+                     $menuText = $text . "\n\n";
+                     foreach ($buttons as $index => $button) {
+                         $menuText .= ($index + 1) . ". " . ($button['reply']['title'] ?? "Option {$index}") . "\n";
+                     }
+                     $menuText .= "\nKetik angka pilihan (contoh: 1)";
+                     $this->sendMessage($to, $menuText);
+                     return;
                 }
-                $menuText .= "\nKetik angka pilihan (contoh: 1)";
-                $this->sendMessage($to, $menuText);
-                return;
-            }
 
-            Log::error('WAHA: Failed to send buttons', [
-                'to' => $to,
-                'response' => $response->json()
-            ]);
-        }
+                Log::error('WAHA: Failed to send buttons', [
+                    'to' => $to,
+                    'response' => $response->json()
+                ]);
+            }
         } catch (\Exception $e) {
             Log::error('WAHA: Error sending buttons', [
                 'error' => $e->getMessage(),
@@ -170,7 +179,9 @@ class WhatsAppService
             $base64 = base64_encode($fileContent);
             $mimeType = Storage::mimeType($filePath);
             
-            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sessions/{$this->session}/file", [
+            $url = "{$this->baseUrl}/api/sendFile";
+            
+            $response = $this->getHttpClient()->post($url, [
                 'chatId' => $this->formatChatId($to),
                 'file' => [
                     'mimetype' => $mimeType,
@@ -227,8 +238,8 @@ class WhatsAppService
      */
     private function convertLidToPhone(string $lid): ?string
     {
-        // Use the contacts endpoint to fetch profile info including phone number
-        $url = "{$this->baseUrl}/api/sessions/{$this->session}/contacts/{$lid}";
+        // For flat API, usually GET /api/contacts/{lid}?session={session}
+        $url = "{$this->baseUrl}/api/contacts/{$lid}";
 
         try {
             Log::info('WAHA: Converting LID to phone', [
@@ -236,7 +247,9 @@ class WhatsAppService
                 'lid' => $lid
             ]);
 
-            $response = $this->getHttpClient()->get($url);
+            $response = $this->getHttpClient()->get($url, [
+                'session' => $this->session
+            ]);
             
             if ($response->successful()) {
                 $data = $response->json();
