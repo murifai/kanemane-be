@@ -29,10 +29,15 @@ class PaymentWebhookController extends Controller
         }
 
         // 3. Extract Body Parameters
-        // Based on common patterns: refId, amount, message_id
-        $refId = $request->input('refId', '');
-        $amount = $request->input('amount', '');
-        $messageId = $request->input('message_id', '');
+        // Payload structure: { event: '...', data: { message_data: { ... } } }
+        $data = $request->input('data.message_data', []);
+        
+        $refId = $data['refId'] ?? $request->input('refId', '');
+        
+        // Amount can be in totals.totalPrice or items[0].price
+        $amount = $data['totals']['totalPrice'] ?? $request->input('amount', 0);
+        
+        $messageId = $request->input('data.message_id') ?? $request->input('message_id', '');
         
         // 4. Verify Signature (if provided)
         if ($receivedSignature) {
@@ -52,12 +57,11 @@ class PaymentWebhookController extends Controller
         }
 
         // 5. Identify User
-        // We assume the payload contains 'customer_email' or 'email'
-        $email = $request->input('customer_email') ?? $request->input('email');
+        $email = $data['customer']['email'] ?? $request->input('customer_email') ?? $request->input('email');
         
         if (!$email) {
-            Log::error('Lynk Webhook: Email missing in payload');
-            return response()->json(['message' => 'Email missing'], 200); // 200 to stop retries if it's a structural error
+            Log::error('Lynk Webhook: Email missing in payload', ['payload' => $request->all()]);
+            return response()->json(['message' => 'Email missing'], 200); 
         }
 
         $user = User::where('email', $email)->first();
