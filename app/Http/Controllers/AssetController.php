@@ -59,6 +59,15 @@ class AssetController extends Controller
         }
         
         $user = $request->user();
+
+        // Check subscription limit for personal assets
+        if ($request->input('owner_type', 'user') === 'user' && !$user->canCreateAsset($request->currency)) {
+            return response()->json([
+                'message' => "Anda mencapai batas 2 aset {$request->currency}. Upgrade ke Pro untuk unlimited aset.",
+                'code' => 'ASSET_LIMIT_REACHED'
+            ], 403);
+        }
+        
         $ownerType = $request->input('owner_type', 'user');
         
         if ($ownerType === 'family') {

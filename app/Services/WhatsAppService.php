@@ -371,6 +371,25 @@ class WhatsAppService
             return;
         }
 
+        // Check if user has Pro subscription for WhatsApp integration
+        if (!$user->canAccessFeature('whatsapp')) {
+            $tier = $user->getSubscriptionTier();
+            $upgradeUrl = config('app.frontend_url') . '/subscription';
+            
+            $message = "🔒 *Fitur Pro Diperlukan*\n\n";
+            $message .= "Integrasi WhatsApp hanya tersedia untuk pengguna Pro.\n\n";
+            $message .= "Anda saat ini menggunakan paket {$tier}.\n\n";
+            $message .= "Upgrade ke Pro untuk:\n";
+            $message .= "✅ Integrasi WhatsApp\n";
+            $message .= "✅ Scan Resi\n";
+            $message .= "✅ Export Laporan\n";
+            $message .= "✅ AI Parsing\n\n";
+            $message .= "Upgrade di: {$upgradeUrl}";
+            
+            $this->sendMessage($from, $message);
+            return;
+        }
+
         try {
             // Handle different message types
             if (isset($message['hasMedia']) && $message['hasMedia']) {

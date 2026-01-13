@@ -60,39 +60,74 @@ class Subscription extends Model
     public static function getPlanPrice(string $plan): int
     {
         return match($plan) {
-            'manual' => 10000,
-            'ai' => 20000,
-            'family_ai' => 30000,
+            'basic' => 19000,  // Rp 19.000/month
+            'pro' => 49000,    // Rp 49.000/month
             default => 0,
         };
     }
 
-    /**
-     * Get plan features
-     */
     public static function getPlanFeatures(string $plan): array
     {
         return match($plan) {
-            'manual' => [
-                'Basic expense tracking',
-                'Charts and reports',
-                'Family account (up to 2 members)',
-                'Manual data entry'
+            'basic' => [
+                'Akses webapp (Dashboard, Assets, Transactions)',
+                'Input transaksi manual',
+                'Visualisasi grafik',
+                'Limit 2 Aset per Mata Uang',
             ],
-            'ai' => [
-                'All Manual features',
-                'Receipt OCR scanning',
-                'Smart expense parsing',
-                'WhatsApp chatbot',
-                'Natural language input'
-            ],
-            'family_ai' => [
-                'All AI features',
-                'Extended family account (up to 4 members)',
-                'Shared budget management',
-                'Priority support'
+            'pro' => [
+                'Semua fitur Basic',
+                'Integrasi WhatsApp Bot',
+                'Scan Foto Resi',
+                'Laporan Keuangan Excel/CSV',
+                'Unlimited Aset',
             ],
             default => [],
         };
     }
+
+    /**
+     * Check if subscription has access to a specific feature
+     */
+    public function hasFeature(string $feature): bool
+    {
+        if (!$this->isActive()) {
+            return false;
+        }
+
+        // Pro has access to all features
+        if ($this->plan === 'pro') {
+            return true;
+        }
+
+        // Basic tier restrictions
+        $proOnlyFeatures = ['export', 'scan', 'whatsapp'];
+        
+        return !in_array($feature, $proOnlyFeatures);
+    }
+
+    /**
+     * Check if can export reports
+     */
+    public function canExportReports(): bool
+    {
+        return $this->hasFeature('export');
+    }
+
+    /**
+     * Check if can scan receipts
+     */
+    public function canScanReceipts(): bool
+    {
+        return $this->hasFeature('scan');
+    }
+
+    /**
+     * Check if can use WhatsApp integration
+     */
+    public function canUseWhatsApp(): bool
+    {
+        return $this->hasFeature('whatsapp');
+    }
+
 }

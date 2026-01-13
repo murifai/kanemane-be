@@ -35,7 +35,7 @@ class SubscriptionController extends Controller
                 'success' => true,
                 'data' => [
                     'has_subscription' => false,
-                    'current_plan' => 'free'
+                    'current_plan' => null
                 ]
             ]);
         }
@@ -61,22 +61,16 @@ class SubscriptionController extends Controller
     {
         $plans = [
             [
-                'id' => 'manual',
-                'name' => 'Manual',
-                'price' => Subscription::getPlanPrice('manual'),
-                'features' => Subscription::getPlanFeatures('manual'),
+                'id' => 'basic',
+                'name' => 'Basic',
+                'price' => Subscription::getPlanPrice('basic'),
+                'features' => Subscription::getPlanFeatures('basic'),
             ],
             [
-                'id' => 'ai',
-                'name' => 'AI',
-                'price' => Subscription::getPlanPrice('ai'),
-                'features' => Subscription::getPlanFeatures('ai'),
-            ],
-            [
-                'id' => 'family_ai',
-                'name' => 'Family AI',
-                'price' => Subscription::getPlanPrice('family_ai'),
-                'features' => Subscription::getPlanFeatures('family_ai'),
+                'id' => 'pro',
+                'name' => 'Pro',
+                'price' => Subscription::getPlanPrice('pro'),
+                'features' => Subscription::getPlanFeatures('pro'),
             ],
         ];
 
@@ -95,38 +89,36 @@ class SubscriptionController extends Controller
      */
     public function checkout(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'plan' => 'required|in:manual,ai,family_ai'
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
         try {
-            $user = auth()->user();
+            $validator = Validator::make($request->all(), [
+                'plan' => 'required|in:basic,pro',
+            ]);
 
-            // Check if user already has active subscription
-            $activeSubscription = Subscription::where('user_id', $user->id)
-                ->where('status', 'active')
-                ->first();
-
-            if ($activeSubscription && $activeSubscription->isActive()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'You already have an active subscription'
-                ], 400);
+            if ($validator->fails()) {
+                return response()->json(['errors' => $validator->errors()], 422);
             }
 
-            // Create payment
-            $payment = $this->midtransService->createPayment($user, $request->plan);
+            $plan = $request->plan;
 
+            // Lynk.id URLs from env
+            $paymentUrl = match($plan) {
+                'basic' => env('LYNK_BASIC_URL'),
+                'pro' => env('LYNK_PRO_URL'),
+                default => null,
+            };
+
+            if (!$paymentUrl) {
+                return response()->json([
+                    'message' => 'Payment URL not configured for this plan'
+                ], 500);
+            }
+
+            // We return it as redirect_url so frontend follows it
             return response()->json([
                 'success' => true,
-                'data' => $payment
+                'data' => [
+                    'redirect_url' => $paymentUrl
+                ]
             ]);
         } catch (\Exception $e) {
             return response()->json([

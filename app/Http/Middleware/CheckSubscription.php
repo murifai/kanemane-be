@@ -13,7 +13,7 @@ class CheckSubscription
      *
      * Check if user has active subscription for AI features
      */
-    public function handle(Request $request, Closure $next, string $requiredPlan = 'manual')
+    public function handle(Request $request, Closure $next, string $requiredPlan = 'basic')
     {
         $user = auth()->user();
 
@@ -40,14 +40,14 @@ class CheckSubscription
         }
 
         // Check plan level
-        $planHierarchy = ['manual' => 1, 'ai' => 2, 'family_ai' => 3];
+        $planHierarchy = ['basic' => 1, 'pro' => 2];
         $userPlanLevel = $planHierarchy[$subscription->plan] ?? 0;
         $requiredPlanLevel = $planHierarchy[$requiredPlan] ?? 0;
 
         if ($userPlanLevel < $requiredPlanLevel) {
             return response()->json([
                 'success' => false,
-                'message' => "This feature requires {$requiredPlan} plan or higher.",
+                'message' => "Fitur ini memerlukan paket {$requiredPlan} atau lebih tinggi.",
                 'current_plan' => $subscription->plan,
                 'required_plan' => $requiredPlan
             ], 403);

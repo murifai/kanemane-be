@@ -6,6 +6,7 @@ use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\WebhookController;
+use App\Http\Controllers\PaymentWebhookController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\ReportController;
 use Illuminate\Http\Request;
@@ -33,6 +34,7 @@ Route::prefix('webhook')->group(function () {
     Route::get('whatsapp', [WebhookController::class, 'verifyWhatsApp']);
     Route::post('whatsapp', [WebhookController::class, 'receiveWhatsApp']);
     Route::post('midtrans', [SubscriptionController::class, 'handleNotification']);
+    Route::post('lynk', [PaymentWebhookController::class, 'handleLynk']);
 });
 
 // Onboarding token generation (no auth required, for WhatsApp bot)
@@ -77,8 +79,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // AI
     Route::post('ai/parse-text', [AIController::class, 'parseText']);
-    Route::post('ai/scan-receipt', [AIController::class, 'scanReceipt']);
-    Route::post('ai/quick-expense', [AIController::class, 'quickExpense']);
+    Route::post('ai/scan-receipt', [AIController::class, 'scanReceipt'])->middleware('feature:scan');
+    Route::post('ai/quick-expense', [AIController::class, 'quickExpense'])->middleware('feature:whatsapp');
 
     // Subscription
     Route::get('subscription', [SubscriptionController::class, 'index']);
@@ -88,5 +90,5 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('subscription/cancel', [SubscriptionController::class, 'cancel']);
 
     // Reports
-    Route::get('reports/export', [ReportController::class, 'export']);
+    Route::get('reports/export', [ReportController::class, 'export'])->middleware('feature:export');
 });
