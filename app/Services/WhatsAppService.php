@@ -67,7 +67,7 @@ class WhatsAppService
     public function sendMessage(string $to, string $message): void
     {
         try {
-            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sendText", [
+            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sessions/{$this->session}/text", [
                 'chatId' => $this->formatChatId($to),
                 'text' => $message,
                 'session' => $this->session
@@ -101,7 +101,7 @@ class WhatsAppService
                 ];
             }, $buttons, array_keys($buttons));
 
-            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sendButtons", [
+            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sessions/{$this->session}/buttons", [
                 'chatId' => $this->formatChatId($to),
                 'text' => $text,
                 'buttons' => $wahaButtons,
@@ -144,7 +144,7 @@ class WhatsAppService
             $base64 = base64_encode($fileContent);
             $mimeType = Storage::mimeType($filePath);
             
-            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sendFile", [
+            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sessions/{$this->session}/file", [
                 'chatId' => $this->formatChatId($to),
                 'file' => [
                     'mimetype' => $mimeType,
@@ -202,7 +202,7 @@ class WhatsAppService
     private function convertLidToPhone(string $lid): ?string
     {
         try {
-            $response = $this->getHttpClient()->get("{$this->baseUrl}/api/{$this->session}/lids/{$lid}");
+            $response = $this->getHttpClient()->get("{$this->baseUrl}/api/sessions/{$this->session}/contacts/{$lid}");
             
             if ($response->successful()) {
                 $data = $response->json();

@@ -104,27 +104,50 @@ class OnboardingController extends Controller
         $user = $request->user();
         
         $validator = Validator::make($request->all(), [
-            'primary_asset_id' => 'required|exists:assets,id',
+            'primary_asset_jpy_id' => 'nullable|exists:assets,id',
+            'primary_asset_idr_id' => 'nullable|exists:assets,id',
         ]);
         
         if ($validator->fails()) {
             return response()->json(['errors' => $validator->errors()], 422);
         }
-        
-        // Verify that the asset belongs to the user
-        $asset = $user->personalAssets()->find($request->primary_asset_id);
-        
-        if (!$asset) {
-            return response()->json(['error' => 'Asset not found or does not belong to user'], 403);
+
+        $userId = $user->id;
+
+        // Validate JPY Asset ownership
+        if ($request->filled('primary_asset_jpy_id')) {
+            $assetJpy = $user->personalAssets()->where('id', $request->primary_asset_jpy_id)->first();
+            if (!$assetJpy || $assetJpy->currency !== 'JPY') {
+                return response()->json(['error' => 'Invalid JPY primary asset'], 422);
+            }
+            $user->primary_asset_jpy_id = $request->primary_asset_jpy_id;
+        }
+
+        // Validate IDR Asset ownership
+        if ($request->filled('primary_asset_idr_id')) {
+            $assetIdr = $user->personalAssets()->where('id', $request->primary_asset_idr_id)->first();
+            if (!$assetIdr || $assetIdr->currency !== 'IDR') {
+                return response()->json(['error' => 'Invalid IDR primary asset'], 422);
+            }
+            $user->primary_asset_idr_id = $request->primary_asset_idr_id;
+        }
+
+        // Ensure at least one primary asset is set if user has assets in that currency
+        // This logic is slightly loose to avoid blocking, assuming frontend handles mandatory selection
+        if (!$user->primary_asset_jpy_id && !$user->primary_asset_idr_id) {
+             return response()->json(['error' => 'At least one primary asset must be selected'], 422);
         }
         
-        // Set primary asset
-        $user->primary_asset_id = $request->primary_asset_id;
+        // Use the old field as fallback or main indicator if needed, 
+        // but for now we rely on the specific fields. 
+        // We can just set the first available one as the "generic" primary if needed for legacy compatibility
+        $user->primary_asset_id = $user->primary_asset_jpy_id ?? $user->primary_asset_idr_id;
+        
         $user->save();
         
         return response()->json([
             'message' => 'Onboarding completed successfully',
-            'user' => $user->load('primaryAsset'),
+            'user' => $user->load(['primaryAssetJpy', 'primaryAssetIdr']),
         ]);
     }
 }

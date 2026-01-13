@@ -60,7 +60,22 @@ class AuthController extends Controller
      */
     public function user(Request $request)
     {
-        return response()->json($request->user());
+        $user = $request->user();
+        
+        // Append subscription data
+        $subscription = $user->activeSubscription;
+        $scanFeature = $user->canAccessFeature('scan_receipt');
+        
+        $userData = $user->toArray();
+        $userData['subscription'] = [
+            'plan' => $user->getSubscriptionTier(), // Returns 'basic' or 'pro'
+            'status' => $subscription ? $subscription->status : 'inactive',
+            'features' => [
+                'scan_receipt' => $scanFeature
+            ]
+        ];
+
+        return response()->json($userData);
     }
 
     /**
