@@ -61,10 +61,16 @@ class AIController extends Controller
     public function scanReceipt(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'image' => 'required|image|mimes:jpeg,jpg,png|max:10240' // Max 10MB
+            'image' => 'required|file|mimes:jpeg,jpg,png,heic,heif|max:10240' // Max 10MB, added HEIC support
         ]);
 
         if ($validator->fails()) {
+            Log::warning('Receipt scan validation failed', [
+                'errors' => $validator->errors(),
+                'file_type' => $request->file('image')?->getMimeType(),
+                'file_size' => $request->file('image')?->getSize(),
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'errors' => $validator->errors()
@@ -77,11 +83,19 @@ class AIController extends Controller
             $path = $image->store('receipts', 'local');
             $fullPath = storage_path('app/' . $path);
 
+            Log::info('Receipt scan started', [
+                'file_type' => $image->getMimeType(),
+                'file_size' => $image->getSize(),
+                'original_name' => $image->getClientOriginalName(),
+            ]);
+
             // Scan receipt
             $result = $this->geminiService->scanReceipt($fullPath);
 
             // Clean up temporary file
             Storage::disk('local')->delete($path);
+
+            Log::info('Receipt scan completed successfully');
 
             return response()->json([
                 'success' => true,
@@ -92,6 +106,11 @@ class AIController extends Controller
             if (isset($path)) {
                 Storage::disk('local')->delete($path);
             }
+
+            Log::error('Receipt scan failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
 
             return response()->json([
                 'success' => false,

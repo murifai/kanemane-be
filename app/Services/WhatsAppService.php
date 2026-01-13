@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\Expense;
 use App\Models\Income;
 use App\Models\Asset;
+use App\Models\Budget;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -1274,6 +1275,9 @@ class WhatsAppService
             return $this->handleConversationState($text, $user, $from);
         }
         
+        $normalizedText = strtolower(trim($text));
+
+        
         // Check for receipt confirmation
         if (cache()->has("whatsapp_receipt_{$from}")) {
             if (in_array($normalizedText, ['1', 'ya', 'yes', 'y', 'simpan'])) {
@@ -1378,6 +1382,31 @@ class WhatsAppService
     }
 
     /**
+     * Get monthly budget with fallback logic
+     */
+    private function getMonthlyBudget(User $user, string $currency): float
+    {
+        $month = now()->startOfMonth();
+        $budget = Budget::where('user_id', $user->id)
+            ->where('currency', $currency)
+            ->where('month', $month->format('Y-m-d'))
+            ->first();
+
+        if ($budget) {
+            return (float)$budget->amount;
+        }
+
+        // Fallback
+        $fallback = Budget::where('user_id', $user->id)
+            ->where('currency', $currency)
+            ->where('month', '<', $month->format('Y-m-d'))
+            ->orderBy('month', 'desc')
+            ->first();
+
+        return $fallback ? (float)$fallback->amount : 0;
+    }
+
+    /**
      * Handle summary statistics command
      */
     private function handleSummaryCommand(User $user, string $from): void
@@ -1388,14 +1417,11 @@ class WhatsAppService
         $totalJPY = $assets->where('currency', 'JPY')->sum('balance');
         $totalIDR = $assets->where('currency', 'IDR')->sum('balance');
         
-        $incomeJPY = Income::whereHas('asset', function($q) use ($user) {
-            $q->where('owner_id', $user->id)->where('currency', 'JPY');
-        })->whereRaw("DATE_FORMAT(date, '%Y-%m') = ?", [$currentMonth])->sum('amount');
-        
-        $incomeIDR = Income::whereHas('asset', function($q) use ($user) {
-            $q->where('owner_id', $user->id)->where('currency', 'IDR');
-        })->whereRaw("DATE_FORMAT(date, '%Y-%m') = ?", [$currentMonth])->sum('amount');
-        
+        // Get Budgets
+        $budgetJPY = $this->getMonthlyBudget($user, 'JPY');
+        $budgetIDR = $this->getMonthlyBudget($user, 'IDR');
+
+        // Get Expenses (Current Month)
         $expenseJPY = Expense::whereHas('asset', function($q) use ($user) {
             $q->where('owner_id', $user->id)->where('currency', 'JPY');
         })->whereRaw("DATE_FORMAT(date, '%Y-%m') = ?", [$currentMonth])->sum('amount');
@@ -1404,8 +1430,9 @@ class WhatsAppService
             $q->where('owner_id', $user->id)->where('currency', 'IDR');
         })->whereRaw("DATE_FORMAT(date, '%Y-%m') = ?", [$currentMonth])->sum('amount');
         
-        $balanceJPY = $incomeJPY - $expenseJPY;
-        $balanceIDR = $incomeIDR - $expenseIDR;
+        // Calculate Remaining Budget
+        $remainingJPY = $budgetJPY - $expenseJPY;
+        $remainingIDR = $budgetIDR - $expenseIDR;
         
         $topCategory = Expense::whereHas('asset', function($q) use ($user) {
             $q->where('owner_id', $user->id);
@@ -1421,17 +1448,20 @@ class WhatsAppService
         $message .= "💰 *Total Aset:*\n";
         $message .= "   JPY: ¥" . number_format($totalJPY, 0, ',', '.') . "\n";
         $message .= "   IDR: Rp" . number_format($totalIDR, 0, ',', '.') . "\n\n";
-        $message .= "📈 *Pemasukan:*\n";
-        $message .= "   JPY: ¥" . number_format($incomeJPY, 0, ',', '.') . "\n";
-        $message .= "   IDR: Rp" . number_format($incomeIDR, 0, ',', '.') . "\n\n";
+        
+        $message .= "⚖️ *Budget:*\n";
+        $message .= "   JPY: ¥" . number_format($budgetJPY, 0, ',', '.') . "\n";
+        $message .= "   IDR: Rp" . number_format($budgetIDR, 0, ',', '.') . "\n\n";
+        
         $message .= "📉 *Pengeluaran:*\n";
         $message .= "   JPY: ¥" . number_format($expenseJPY, 0, ',', '.') . "\n";
         $message .= "   IDR: Rp" . number_format($expenseIDR, 0, ',', '.') . "\n\n";
-        $message .= "💵 *Balance:*\n";
-        $balanceIconJPY = $balanceJPY >= 0 ? '+' : '';
-        $balanceIconIDR = $balanceIDR >= 0 ? '+' : '';
-        $message .= "   JPY: {$balanceIconJPY}¥" . number_format($balanceJPY, 0, ',', '.') . "\n";
-        $message .= "   IDR: {$balanceIconIDR}Rp" . number_format($balanceIDR, 0, ',', '.') . "\n";
+        
+        $message .= "💵 *Sisa Budget:*\n";
+        $remainingIconJPY = $remainingJPY < 0 ? '⚠️ ' : ''; // Alert if overbudget
+        $remainingIconIDR = $remainingIDR < 0 ? '⚠️ ' : '';
+        $message .= "   JPY: {$remainingIconJPY}¥" . number_format($remainingJPY, 0, ',', '.') . "\n";
+        $message .= "   IDR: {$remainingIconIDR}Rp" . number_format($remainingIDR, 0, ',', '.') . "\n";
         
         if ($topCategory) {
             $message .= "\n🏆 *Kategori Terbesar:* {$topCategory->category}";
@@ -1560,6 +1590,10 @@ class WhatsAppService
             return $this->handleExportPeriodSelection($text, $user, $from);
         }
         
+        if ($step === 'export_currency') {
+            return $this->handleExportCurrencySelection($text, $user, $from, $data);
+        }
+        
         // Asset creation flow
         if (str_starts_with($step, 'asset_creation_')) {
             return $this->handleAssetCreationFlow($text, $user, $from, $step, $data);
@@ -1603,39 +1637,59 @@ class WhatsAppService
         ];
         
         $period = $periods[$choice];
+        
+        // Update state to next step: export_currency
+        ConversationState::set($from, 'export_currency', ['period' => $period]);
+        
+        // Ask for currency
+        $message = "💰 *Pilih Mata Uang:*\n\n";
+        $message .= "1. JPY (Yen Jepang)\n";
+        $message .= "2. IDR (Rupiah)\n\n";
+        $message .= "Ketik angka 1 atau 2";
+        
+        $this->sendMessage($from, $message);
+        return true;
+    }
+
+    /**
+     * Handle export currency selection and generate report
+     */
+    private function handleExportCurrencySelection(string $text, User $user, string $from, array $data): bool
+    {
+        $choice = trim($text);
+        
+        if (!in_array($choice, ['1', '2'])) {
+            $this->sendMessage($from, "❌ Pilihan tidak valid. Ketik angka 1 (JPY) atau 2 (IDR)");
+            return true;
+        }
+        
+        $currencyMap = ['1' => 'JPY', '2' => 'IDR'];
+        $currency = $currencyMap[$choice];
+        $period = $data['period'];
+        
         ConversationState::clear($from);
         
-        $this->sendMessage($from, "⏳ Membuat laporan {$period['name']}...");
+        $this->sendMessage($from, "⏳ Membuat laporan {$period['name']} ({$currency})...");
         
         try {
             $reportService = app(\App\Services\ReportService::class);
             $startDate = now()->subMonths($period['months'])->startOfMonth();
             $endDate = now()->endOfMonth();
             
-            // Generate report for both currencies
-            $reportDataJPY = $reportService->generateReport($user->id, $startDate, $endDate, 'JPY');
-            $reportDataIDR = $reportService->generateReport($user->id, $startDate, $endDate, 'IDR');
+            // Generate report for selected currency
+            $reportData = $reportService->generateReport($user->id, $startDate, $endDate, $currency);
             
-            $filename = "Laporan_{$period['name']}_" . now()->format('Y-m-d') . ".xlsx";
+            $filename = "Laporan_{$currency}_{$period['name']}_" . now()->format('Y-m-d') . ".xlsx";
             $filepath = "exports/{$user->id}/" . uniqid() . ".xlsx";
             
-            // Combine both currency reports
-            $combinedData = [
-                'transactions' => $reportDataJPY['transactions']->concat($reportDataIDR['transactions'])->sortByDesc('date')->values(),
-                'assets' => $reportDataJPY['assets']->concat($reportDataIDR['assets']),
-                'totals' => [
-                    'total_income' => $reportDataJPY['totals']['total_income'] + $reportDataIDR['totals']['total_income'],
-                    'total_expense' => $reportDataJPY['totals']['total_expense'] + $reportDataIDR['totals']['total_expense'],
-                    'balance' => $reportDataJPY['totals']['balance'] + $reportDataIDR['totals']['balance'],
-                ],
-                'period' => $reportDataJPY['period'],
-                'currency' => 'ALL',
-            ];
+            // Create single currency export
+            // We need to use FinancialReportExport with correct structure
+            // Existing FinancialReportExport likely expects the structure returned by ReportService
             
-            $export = new \App\Exports\FinancialReportExport($combinedData);
+            $export = new \App\Exports\FinancialReportExport($reportData);
             \Maatwebsite\Excel\Facades\Excel::store($export, $filepath, 'local');
             
-            // Create export record for download link
+            // Create export record for download link (optional, but good for tracking)
             $token = \Illuminate\Support\Str::uuid();
             \App\Models\Export::create([
                 'user_id' => $user->id,
@@ -1650,8 +1704,8 @@ class WhatsAppService
             $this->sendDocument($from, $filepath, $filename);
             
         } catch (\Exception $e) {
-            \Log::error('Export failed', ['error' => $e->getMessage()]);
-            $this->sendMessage($from, "❌ Gagal membuat laporan.");
+            \Log::error('Export failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            $this->sendMessage($from, "❌ Gagal membuat laporan: " . $e->getMessage());
         }
         
         return true;

@@ -85,6 +85,23 @@ class DashboardController extends Controller
             ->latest('date')
             ->first();
 
+        // Get Budget (Logic from BudgetController)
+        $month = now()->startOfMonth();
+        $budget = \App\Models\Budget::where('user_id', $user->id)
+            ->where('currency', $currency)
+            ->where('month', $month->format('Y-m-d'))
+            ->first();
+
+        if (!$budget) {
+            // Fallback
+            $budget = \App\Models\Budget::where('user_id', $user->id)
+                ->where('currency', $currency)
+                ->where('month', '<', $month->format('Y-m-d'))
+                ->orderBy('month', 'desc')
+                ->first();
+        }
+        $budgetAmount = $budget ? (float)$budget->amount : 0;
+
         return response()->json([
             'user_name' => $user->name,
             'currency' => $currency,
@@ -96,6 +113,7 @@ class DashboardController extends Controller
             'recent_transactions' => $recentTransactions,
             'goals' => [],
             'exchange_rate' => $exchangeRate ? (float)$exchangeRate->rate : 107, // Fallback to 107
+            'budget_amount' => $budgetAmount,
         ]);
     }
 

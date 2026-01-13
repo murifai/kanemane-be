@@ -4,6 +4,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\AssetController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\BudgetController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\PaymentWebhookController;
@@ -72,6 +73,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('transactions/{id}', [TransactionController::class, 'show']);
     Route::put('transactions/{id}', [TransactionController::class, 'update']);
     Route::delete('transactions/{id}', [TransactionController::class, 'destroy']);
+    
+    // Budgets
+    Route::get('budgets', [BudgetController::class, 'show']);
+    Route::post('budgets', [BudgetController::class, 'store']);
     
     // Dashboard
     Route::get('dashboard/summary', [DashboardController::class, 'summary']);
