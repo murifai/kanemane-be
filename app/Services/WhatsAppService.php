@@ -238,8 +238,13 @@ class WhatsAppService
      */
     private function convertLidToPhone(string $lid): ?string
     {
-        // For flat API, usually GET /api/contacts/{lid}?session={session}
-        $url = "{$this->baseUrl}/api/contacts/{$lid}";
+        // Use check-exists endpoint which is more reliable for resolving LIDs
+        $url = "{$this->baseUrl}/api/contacts/check-exists";
+        
+        // Ensure LID has suffix if missing
+        if (!str_contains($lid, '@')) {
+            $lid = $lid . '@lid';
+        }
 
         try {
             Log::info('WAHA: Converting LID to phone', [
@@ -248,22 +253,24 @@ class WhatsAppService
             ]);
 
             $response = $this->getHttpClient()->get($url, [
+                'phone' => $lid,
                 'session' => $this->session
             ]);
             
             if ($response->successful()) {
                 $data = $response->json();
                 
-                // WAHA returns 'pn' field with format: "6285175109501@c.us"
-                $pn = $data['pn'] ?? null;
+                // WAHA check-exists returns: {"id": "user@c.us", "status": 200, "isBusiness": false, "canReceiveMessage": true}
+                // or sometimes it simply resolves the ID
+                $resolvedId = $data['id']['_serialized'] ?? $data['id'] ?? null;
                 
-                if ($pn) {
-                    $phone = str_replace('@c.us', '', $pn);
+                if ($resolvedId && (str_contains($resolvedId, '@c.us') || str_contains($resolvedId, '@s.whatsapp.net'))) {
+                    $phone = str_replace(['@c.us', '@s.whatsapp.net'], '', $resolvedId);
                     Log::info('WAHA: LID converted successfully', ['lid' => $lid, 'phone' => $phone]);
                     return $phone;
                 }
                 
-                Log::warning('WAHA: LID conversion response missing phone number', ['data' => $data]);
+                Log::warning('WAHA: LID conversion response missing resolved ID', ['data' => $data]);
                 return null;
             }
             
@@ -367,6 +374,9 @@ class WhatsAppService
             return;
         }
 
+        // Log full payload for debugging LID issues
+        Log::info('WAHA: Incoming message payload', ['payload' => $payload]);
+
         $message = $payload['payload'] ?? [];
         $from = $message['from'] ?? null;
 
@@ -385,7 +395,11 @@ class WhatsAppService
                 'lid' => $phone
             ]);
             
-            $convertedPhone = $this->convertLidToPhone($phone);
+            // Try to find if the Real JID is already in the payload
+            // Some WAHA versions send it in _data -> id -> remote or similar
+            // But we will primarily rely on the API look up
+            
+            $convertedPhone = $this->convertLidToPhone($from);
             
             if ($convertedPhone) {
                 Log::info('WAHA: Successfully converted LID to phone', [
