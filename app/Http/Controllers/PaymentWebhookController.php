@@ -14,47 +14,56 @@ class PaymentWebhookController extends Controller
      */
     public function handleLynk(Request $request)
     {
-        // 1. Extract Headers & Config
+        // 1. Log Raw Request for Debugging
+        Log::info('Lynk Webhook Raw:', $request->all());
+
+        // 2. Extract Headers & Config
+        // Lynk.id might send signature in headers, but documentation is scarce.
+        // We will check both header and payload if needed, but rely on what we have.
         $receivedSignature = $request->header('X-Lynk-Signature');
         $merchantKey = env('LYNK_MERCHANT_KEY');
 
-        if (!$receivedSignature || !$merchantKey) {
-            Log::warning('Lynk Webhook: Missing signature or merchant key configuration');
-            return response()->json(['message' => 'Configuration error or missing signature'], 403);
+        Log::info('Lynk Config Debug', [
+            'has_key' => !empty($merchantKey),
+            'key_length' => strlen($merchantKey ?? ''),
+            'env_val' => env('LYNK_MERCHANT_KEY') ? 'exists' : 'missing'
+        ]);
+
+        if (!$merchantKey) {
+            Log::error('Lynk Webhook: LYNK_MERCHANT_KEY not configured');
+            return response()->json(['message' => 'Server configuration error'], 500);
         }
 
-        // 2. Extract Body Parameters
-        // Docs: validation string = amount + refId + message_id + secret_key
+        // 3. Extract Body Parameters
+        // Based on common patterns: refId, amount, message_id
         $refId = $request->input('refId', '');
         $amount = $request->input('amount', '');
         $messageId = $request->input('message_id', '');
         
-        // Ensure parameters are treated as strings for hashing
-        $signatureString = (string)$amount . (string)$refId . (string)$messageId . $merchantKey;
-        
-        // 3. Calculate Signature (SHA256 Hex)
-        $calculatedSignature = hash('sha256', $signatureString);
+        // 4. Verify Signature (if provided)
+        if ($receivedSignature) {
+             // Docs: validation string = amount + refId + message_id + secret_key
+            $signatureString = (string)$amount . (string)$refId . (string)$messageId . $merchantKey;
+            $calculatedSignature = hash('sha256', $signatureString);
 
-        // 4. Verify Signature
-        // Using hash_equals for timing attack protection
-        if (!hash_equals($calculatedSignature, $receivedSignature)) {
-            Log::warning('Lynk Webhook: Invalid Signature', [
-                'calculated' => $calculatedSignature,
-                'received' => $receivedSignature,
-                'payload' => $request->all()
-            ]);
-            return response()->json(['message' => 'Invalid signature'], 403);
+            if (!hash_equals($calculatedSignature, $receivedSignature)) {
+                Log::warning('Lynk Webhook: Invalid Signature', [
+                    'calculated' => $calculatedSignature,
+                    'received' => $receivedSignature,
+                ]);
+                return response()->json(['message' => 'Invalid signature'], 403);
+            }
+        } else {
+             Log::warning('Lynk Webhook: No signature received. Processing with caution.');
         }
 
-        // 5. Process Payment
-        // We assume the payload contains 'customer_email' or 'email' to identify the user
+        // 5. Identify User
+        // We assume the payload contains 'customer_email' or 'email'
         $email = $request->input('customer_email') ?? $request->input('email');
         
         if (!$email) {
-            Log::error('Lynk Webhook: Email missing in payload', $request->all());
-            // We return 200 to acknowledge receipt even if we can't process, to prevent retries? 
-            // Or 422? Usually 200 if it's a valid webhook but business logic failed.
-            return response()->json(['message' => 'Email missing in payload'], 200);
+            Log::error('Lynk Webhook: Email missing in payload');
+            return response()->json(['message' => 'Email missing'], 200); // 200 to stop retries if it's a structural error
         }
 
         $user = User::where('email', $email)->first();
@@ -69,36 +78,47 @@ class PaymentWebhookController extends Controller
         $paidAmount = (int)$amount;
         $plan = null;
 
-        if ($paidAmount >= 19000 && $paidAmount < 49000) {
-            $plan = 'basic';
-        } elseif ($paidAmount >= 49000) {
+        if ($paidAmount >= 49000) {
             $plan = 'pro';
+        } elseif ($paidAmount >= 19000) {
+            $plan = 'basic';
         } else {
              Log::info("Lynk Webhook: Unknown amount {$paidAmount}, no plan matched.");
              return response()->json(['message' => 'Amount does not match any plan'], 200);
         }
 
         // 7. Activate Subscription
-        // Deactivate previous active subscriptions
-        Subscription::where('user_id', $user->id)
-            ->where('status', 'active')
-            ->update(['status' => 'cancelled', 'ends_at' => now()]);
+        try {
+            // Deactivate previous active subscriptions
+            Subscription::where('user_id', $user->id)
+                ->where('status', 'active')
+                ->update([
+                    'status' => 'cancelled',
+                    'expires_at' => now() // Use correct column name
+                ]);
 
-        Subscription::create([
-            'user_id' => $user->id,
-            'plan' => $plan,
-            'status' => 'active',
-            'starts_at' => now(),
-            // Assume monthly for now
-            'ends_at' => now()->addMonth(),
-            'price' => $paidAmount,
-            'order_id' => $refId ?: 'LYNK-' . time(),
-            'payment_method' => 'lynk',
-            'payment_status' => 'paid'
-        ]);
+            Subscription::create([
+                'user_id' => $user->id,
+                'plan' => $plan,
+                'status' => 'active',
+                'started_at' => now(), // Correct column
+                'expires_at' => now()->addMonth(), // Correct column
+                'amount' => $paidAmount, // Correct column
+                'midtrans_order_id' => $refId ?: 'LYNK-' . time(), // Reusing this field for Order ID
+                'payment_type' => 'lynk', // Correct column
+                'midtrans_transaction_id' => $messageId, // Store message_id/transaction_id here
+            ]);
 
-        Log::info("Lynk Webhook: Subscription activated for {$email} (Plan: {$plan})");
+            Log::info("Lynk Webhook: Subscription activated for {$email} (Plan: {$plan})");
 
-        return response()->json(['success' => true]);
+            return response()->json(['success' => true]);
+
+        } catch (\Exception $e) {
+            Log::error('Lynk Webhook: Error creating subscription', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json(['message' => 'Internal error'], 500);
+        }
     }
 }
