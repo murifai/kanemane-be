@@ -326,6 +326,36 @@ class WhatsAppService
     }
 
     /**
+     * Find user by phone number using multiple strategies
+     */
+    private function findUser(string $normalizedPhone): ?User
+    {
+        // 1. Try exact match with normalized phone (e.g. 62812345678)
+        $user = User::where('phone', $normalizedPhone)->first();
+        if ($user) return $user;
+
+        // 2. Try with + prefix (e.g. +62812345678)
+        $user = User::where('phone', '+' . $normalizedPhone)->first();
+        if ($user) return $user;
+
+        // 3. Try Indonesian local format (e.g. 0812345678)
+        if (str_starts_with($normalizedPhone, '62')) {
+            $localPhone = '0' . substr($normalizedPhone, 2);
+            $user = User::where('phone', $localPhone)->first();
+            if ($user) return $user;
+        }
+
+        // 4. Fallback: Iterate and normalize database records
+        // This is expensive but handles inconsistent DB formats
+        return User::whereNotNull('phone')
+            ->get()
+            ->first(function($u) use ($normalizedPhone) {
+                $userNormalized = $this->normalizePhone($u->phone);
+                return $userNormalized === $normalizedPhone;
+            });
+    }
+
+    /**
      * Handle incoming WhatsApp message from WAHA webhook
      */
     public function handleIncomingMessage(array $payload): void
@@ -379,18 +409,13 @@ class WhatsAppService
             'normalized_phone' => $normalizedPhone
         ]);
 
-        // Find user by normalized phone number
-        $user = User::whereNotNull('phone')
-            ->get()
-            ->first(function($u) use ($normalizedPhone) {
-                $userNormalized = $this->normalizePhone($u->phone);
-                return $userNormalized === $normalizedPhone;
-            });
+        // Find user using robust lookup strategy
+        $user = $this->findUser($normalizedPhone);
 
         if (!$user) {
-            // User not registered - send onboarding link
+            // User not registered - send onboarding link with debug info
             $onboardingPath = $this->getOnboardingPath();
-            $this->sendMessage($from, "Halo! 👋\n\nNomor kamu sepertinya belum terdaftar nih.\n\nDaftarin di sini ya:\n{$onboardingPath}");
+            $this->sendMessage($from, "Halo! 👋\n\nNomor kamu ({$normalizedPhone}) sepertinya belum terdaftar nih.\n\nDaftarin di sini ya:\n{$onboardingPath}");
             return;
         }
 
