@@ -38,6 +38,10 @@ Route::prefix('webhook')->group(function () {
 // Onboarding token generation (no auth required, for WhatsApp bot)
 Route::post('onboarding/generate-token', [\App\Http\Controllers\OnboardingController::class, 'generateToken']);
 
+// Public export download (no auth required, token-based)
+Route::get('exports/{token}', [\App\Http\Controllers\ExportController::class, 'download']);
+
+
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {

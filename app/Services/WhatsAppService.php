@@ -134,6 +134,43 @@ class WhatsAppService
     }
 
     /**
+     * Send document/file to user
+     */
+    public function sendDocument(string $to, string $filePath, string $filename): void
+    {
+        try {
+            // Get file from storage
+            $fileContent = Storage::get($filePath);
+            $base64 = base64_encode($fileContent);
+            $mimeType = Storage::mimeType($filePath);
+            
+            $response = $this->getHttpClient()->post("{$this->baseUrl}/api/sendFile", [
+                'chatId' => $this->formatChatId($to),
+                'file' => [
+                    'mimetype' => $mimeType,
+                    'filename' => $filename,
+                    'data' => $base64,
+                ],
+                'session' => $this->session
+            ]);
+
+            if (!$response->successful()) {
+                Log::error('WAHA: Failed to send document', [
+                    'to' => $to,
+                    'filename' => $filename,
+                    'response' => $response->json()
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('WAHA: Error sending document', [
+                'error' => $e->getMessage(),
+                'to' => $to,
+                'filename' => $filename
+            ]);
+        }
+    }
+
+    /**
      * Normalize phone number to international format without country code prefix
      * Removes all non-numeric characters and handles Indonesian numbers
      * Examples:
@@ -397,6 +434,51 @@ class WhatsAppService
         // Check for wallet management command
         if ($lowerText === '/dompet' || $lowerText === '/wallet') {
             $this->handleWalletCommand($user, $from);
+            return;
+        }
+
+         // Check for transaction history command
+        if ($lowerText === 'riwayat' || $lowerText === 'history') {
+            $this->handleHistoryCommand($user, $from);
+            return;
+        }
+        
+        // Check for filtered history
+        if (preg_match('/^(riwayat|history)\s+(.+)$/i', $text, $matches)) {
+            $filter = trim($matches[2]);
+            $this->handleHistoryCommand($user, $from, $filter);
+            return;
+        }
+
+        // Check for summary command
+        if ($lowerText === '/ringkasan' || $lowerText === '/summary' || $lowerText === 'ringkasan') {
+            $this->handleSummaryCommand($user, $from);
+            return;
+        }
+
+        // Check for export command
+        if ($lowerText === '/export' || $lowerText === 'export') {
+            $this->handleExportCommand($user, $from);
+            return;
+        }
+
+        // Check for asset creation command
+        if ($lowerText === '/tambah aset' || $lowerText === '/add asset') {
+            $this->handleAssetCreationStart($user, $from);
+            return;
+        }
+
+        // Check for asset edit command
+        if (preg_match('/^\/(edit|ubah)\s+aset\s+(.+)$/i', $text, $matches)) {
+            $assetName = trim($matches[2]);
+            $this->handleAssetEditStart($user, $from, $assetName);
+            return;
+        }
+
+        // Check for asset delete command
+        if (preg_match('/^\/(hapus|delete)\s+aset\s+(.+)$/i', $text, $matches)) {
+            $assetName = trim($matches[2]);
+            $this->handleAssetDeleteStart($user, $from, $assetName);
             return;
         }
 
@@ -1032,14 +1114,10 @@ class WhatsAppService
      */
     private function handlePendingAction(string $text, User $user, string $from): bool
     {
-        $normalizedText = strtolower(trim($text));
-        
-        Log::info('WAHA: Checking pending action', [
-            'text' => $normalizedText,
-            'from' => $from,
-            'cache_key_receipt' => "whatsapp_receipt_{$from}",
-            'has_receipt' => cache()->has("whatsapp_receipt_{$from}") ? 'yes' : 'no'
-        ]);
+        // Check for conversation state
+        if (ConversationState::hasActive($from)) {
+            return $this->handleConversationState($text, $user, $from);
+        }
         
         // Check for receipt confirmation
         if (cache()->has("whatsapp_receipt_{$from}")) {
@@ -1066,5 +1144,494 @@ class WhatsAppService
         }
         
         return false;
+    }
+
+    /**
+     * Handle transaction history command
+     */
+    private function handleHistoryCommand(User $user, string $from, ?string $filter = null): void
+    {
+        $query = $user->personalAssets()
+            ->with(['incomes' => function($q) {
+                $q->orderBy('date', 'desc')->limit(10);
+            }, 'expenses' => function($q) {
+                $q->orderBy('date', 'desc')->limit(10);
+            }]);
+
+        // Apply filter if provided
+        if ($filter) {
+            $upperFilter = strtoupper($filter);
+            if ($upperFilter === 'JPY' || $upperFilter === 'IDR') {
+                $query->where('currency', $upperFilter);
+            } else {
+                $query->where('name', 'LIKE', "%{$filter}%");
+            }
+        }
+
+        $assets = $query->get();
+
+        // Collect all transactions
+        $transactions = collect();
+        foreach ($assets as $asset) {
+            foreach ($asset->incomes as $income) {
+                $transactions->push([
+                    'date' => $income->date,
+                    'type' => 'income',
+                    'amount' => $income->amount,
+                    'currency' => $asset->currency,
+                    'category' => $income->category,
+                    'asset_name' => $asset->name,
+                ]);
+            }
+            foreach ($asset->expenses as $expense) {
+                $transactions->push([
+                    'date' => $expense->date,
+                    'type' => 'expense',
+                    'amount' => $expense->amount,
+                    'currency' => $asset->currency,
+                    'category' => $expense->category,
+                    'asset_name' => $asset->name,
+                ]);
+            }
+        }
+
+        // Sort by date and take 5
+        $transactions = $transactions->sortByDesc('date')->take(5);
+
+        if ($transactions->isEmpty()) {
+            $filterText = $filter ? " untuk {$filter}" : "";
+            $this->sendMessage($from, "📝 Belum ada transaksi{$filterText}.");
+            return;
+        }
+
+        $filterText = $filter ? " ({$filter})" : "";
+        $message = "📝 *Riwayat Transaksi{$filterText}*\n\n";
+
+        $num = 1;
+        foreach ($transactions as $t) {
+            $date = \Carbon\Carbon::parse($t['date'])->format('d M');
+            $icon = $t['type'] === 'income' ? '↙️' : '↗️';
+            $currencySymbol = $t['currency'] === 'JPY' ? '¥' : 'Rp';
+            $amount = number_format($t['amount'], 0, ',', '.');
+            
+            $message .= "{$num}. {$date} - {$t['category']} {$currencySymbol}{$amount} ({$t['asset_name']}) {$icon}\n";
+            $num++;
+        }
+
+        $message .= "\nLihat lebih: " . config('app.frontend_url') . "/dashboard/transactions";
+        $this->sendMessage($from, $message);
+    }
+
+    /**
+     * Handle summary statistics command
+     */
+    private function handleSummaryCommand(User $user, string $from): void
+    {
+        $currentMonth = now()->format('Y-m');
+        $assets = $user->personalAssets()->get();
+        
+        $totalJPY = $assets->where('currency', 'JPY')->sum('balance');
+        $totalIDR = $assets->where('currency', 'IDR')->sum('balance');
+        
+        $incomeJPY = Income::whereHas('asset', function($q) use ($user) {
+            $q->where('owner_id', $user->id)->where('currency', 'JPY');
+        })->whereRaw("DATE_FORMAT(date, '%Y-%m') = ?", [$currentMonth])->sum('amount');
+        
+        $incomeIDR = Income::whereHas('asset', function($q) use ($user) {
+            $q->where('owner_id', $user->id)->where('currency', 'IDR');
+        })->whereRaw("DATE_FORMAT(date, '%Y-%m') = ?", [$currentMonth])->sum('amount');
+        
+        $expenseJPY = Expense::whereHas('asset', function($q) use ($user) {
+            $q->where('owner_id', $user->id)->where('currency', 'JPY');
+        })->whereRaw("DATE_FORMAT(date, '%Y-%m') = ?", [$currentMonth])->sum('amount');
+        
+        $expenseIDR = Expense::whereHas('asset', function($q) use ($user) {
+            $q->where('owner_id', $user->id)->where('currency', 'IDR');
+        })->whereRaw("DATE_FORMAT(date, '%Y-%m') = ?", [$currentMonth])->sum('amount');
+        
+        $balanceJPY = $incomeJPY - $expenseJPY;
+        $balanceIDR = $incomeIDR - $expenseIDR;
+        
+        $topCategory = Expense::whereHas('asset', function($q) use ($user) {
+            $q->where('owner_id', $user->id);
+        })->whereRaw("DATE_FORMAT(date, '%Y-%m') = ?", [$currentMonth])
+            ->selectRaw('category, SUM(amount) as total')
+            ->groupBy('category')
+            ->orderByDesc('total')
+            ->first();
+        
+        $monthName = now()->format('F Y');
+        
+        $message = "📊 *Ringkasan Bulan Ini ({$monthName})*\n\n";
+        $message .= "💰 *Total Aset:*\n";
+        $message .= "   JPY: ¥" . number_format($totalJPY, 0, ',', '.') . "\n";
+        $message .= "   IDR: Rp" . number_format($totalIDR, 0, ',', '.') . "\n\n";
+        $message .= "📈 *Pemasukan:*\n";
+        $message .= "   JPY: ¥" . number_format($incomeJPY, 0, ',', '.') . "\n";
+        $message .= "   IDR: Rp" . number_format($incomeIDR, 0, ',', '.') . "\n\n";
+        $message .= "📉 *Pengeluaran:*\n";
+        $message .= "   JPY: ¥" . number_format($expenseJPY, 0, ',', '.') . "\n";
+        $message .= "   IDR: Rp" . number_format($expenseIDR, 0, ',', '.') . "\n\n";
+        $message .= "💵 *Balance:*\n";
+        $balanceIconJPY = $balanceJPY >= 0 ? '+' : '';
+        $balanceIconIDR = $balanceIDR >= 0 ? '+' : '';
+        $message .= "   JPY: {$balanceIconJPY}¥" . number_format($balanceJPY, 0, ',', '.') . "\n";
+        $message .= "   IDR: {$balanceIconIDR}Rp" . number_format($balanceIDR, 0, ',', '.') . "\n";
+        
+        if ($topCategory) {
+            $message .= "\n🏆 *Kategori Terbesar:* {$topCategory->category}";
+        }
+        
+        $message .= "\n\nDetail: " . config('app.frontend_url') . "/dashboard";
+        $this->sendMessage($from, $message);
+    }
+
+    /**
+     * Handle export command
+     */
+    private function handleExportCommand(User $user, string $from): void
+    {
+        ConversationState::set($from, 'export_period');
+        
+        $message = "📄 *Pilih periode export:*\n\n";
+        $message .= "1. Bulan ini\n";
+        $message .= "2. 3 bulan terakhir\n";
+        $message .= "3. 6 bulan terakhir\n";
+        $message .= "4. Tahun ini\n\n";
+        $message .= "Ketik angka 1-4";
+        
+        $this->sendMessage($from, $message);
+    }
+    /**
+     * Handle asset creation start
+     */
+    private function handleAssetCreationStart(User $user, string $from): void
+    {
+        ConversationState::set($from, 'asset_creation_type');
+        
+        $message = "🏦 *Tambah Aset Baru*\n\n";
+        $message .= "Jenis aset? (ketik angka)\n\n";
+        $message .= "1. Tabungan\n";
+        $message .= "2. E-Money\n";
+        $message .= "3. Investasi\n";
+        $message .= "4. Cash\n\n";
+        $message .= "Atau ketik 'batal' untuk membatalkan";
+        
+        $this->sendMessage($from, $message);
+    }
+
+    /**
+     * Handle asset edit start
+     */
+    private function handleAssetEditStart(User $user, string $from, string $assetName): void
+    {
+        $asset = $user->personalAssets()
+            ->where('name', 'LIKE', "%{$assetName}%")
+            ->first();
+        
+        if (!$asset) {
+            $this->sendMessage($from, "❌ Aset '{$assetName}' tidak ditemukan.\n\nCek daftar aset dengan perintah: saldo");
+            return;
+        }
+        
+        ConversationState::set($from, 'asset_edit_choice', ['asset_id' => $asset->id]);
+        
+        $message = "✏️ *Edit Aset: {$asset->name}*\n\n";
+        $message .= "Apa yang ingin diubah?\n\n";
+        $message .= "1. Nama\n";
+        $message .= "2. Saldo\n";
+        $message .= "3. Batal\n\n";
+        $message .= "Ketik angka 1-3";
+        
+        $this->sendMessage($from, $message);
+    }
+
+    /**
+     * Handle asset delete start
+     */
+    private function handleAssetDeleteStart(User $user, string $from, string $assetName): void
+    {
+        $asset = $user->personalAssets()
+            ->where('name', 'LIKE', "%{$assetName}%")
+            ->first();
+        
+        if (!$asset) {
+            $this->sendMessage($from, "❌ Aset '{$assetName}' tidak ditemukan.\n\nCek daftar aset dengan perintah: saldo");
+            return;
+        }
+        
+        // Check if it's a primary wallet
+        if ($asset->id === $user->primary_asset_jpy_id || $asset->id === $user->primary_asset_idr_id) {
+            $this->sendMessage($from, "⚠️ Tidak bisa menghapus dompet utama.\n\nUbah dompet utama dulu dengan perintah: /dompet");
+            return;
+        }
+        
+        ConversationState::set($from, 'asset_delete_confirm', ['asset_id' => $asset->id]);
+        
+        $balance = number_format($asset->balance, 0, ',', '.');
+        $currencySymbol = $asset->currency === 'JPY' ? '¥' : 'Rp';
+        
+        $message = "⚠️ *Hapus Aset: {$asset->name}*\n\n";
+        $message .= "Saldo: {$currencySymbol}{$balance}\n\n";
+        $message .= "Yakin ingin menghapus aset ini?\n\n";
+        $message .= "Ketik 'ya' untuk konfirmasi atau 'batal'";
+        
+        $this->sendMessage($from, $message);
+    }
+
+    /**
+     * Handle conversation state for multi-step flows
+     */
+    private function handleConversationState(string $text, User $user, string $from): bool
+    {
+        $state = ConversationState::get($from);
+        if (!$state) {
+            return false;
+        }
+        
+        $step = $state['step'];
+        $data = $state['data'] ?? [];
+        $normalizedText = strtolower(trim($text));
+        
+        // Handle cancellation
+        if (in_array($normalizedText, ['batal', 'cancel', 'stop'])) {
+            ConversationState::clear($from);
+            $this->sendMessage($from, "✅ Dibatalkan.");
+            return true;
+        }
+        
+        // Export flow
+        if ($step === 'export_period') {
+            return $this->handleExportPeriodSelection($text, $user, $from);
+        }
+        
+        // Asset creation flow
+        if (str_starts_with($step, 'asset_creation_')) {
+            return $this->handleAssetCreationFlow($text, $user, $from, $step, $data);
+        }
+        
+        // Asset edit flow
+        if (str_starts_with($step, 'asset_edit_')) {
+            return $this->handleAssetEditFlow($text, $user, $from, $step, $data);
+        }
+        
+        // Asset delete flow
+        if ($step === 'asset_delete_confirm') {
+            return $this->handleAssetDeleteConfirm($text, $user, $from, $data);
+        }
+        
+        // Primary wallet change flow
+        if (str_starts_with($step, 'primary_wallet_')) {
+            return $this->handlePrimaryWalletFlow($text, $user, $from, $step, $data);
+        }
+        
+        return false;
+    }
+
+    /**
+     * Handle export period selection
+     */
+    private function handleExportPeriodSelection(string $text, User $user, string $from): bool
+    {
+        $choice = trim($text);
+        
+        if (!in_array($choice, ['1', '2', '3', '4'])) {
+            $this->sendMessage($from, "❌ Pilihan tidak valid. Ketik angka 1-4 atau 'batal'");
+            return true;
+        }
+        
+        $periods = [
+            '1' => ['name' => 'Bulan ini', 'months' => 1],
+            '2' => ['name' => '3 bulan terakhir', 'months' => 3],
+            '3' => ['name' => '6 bulan terakhir', 'months' => 6],
+            '4' => ['name' => 'Tahun ini', 'months' => 12],
+        ];
+        
+        $period = $periods[$choice];
+        ConversationState::clear($from);
+        
+        $this->sendMessage($from, "⏳ Membuat laporan {$period['name']}...");
+        
+        try {
+            $reportService = app(\App\Services\ReportService::class);
+            $startDate = now()->subMonths($period['months'])->startOfMonth();
+            $endDate = now()->endOfMonth();
+            
+            // Generate report for both currencies
+            $reportDataJPY = $reportService->generateReport($user->id, $startDate, $endDate, 'JPY');
+            $reportDataIDR = $reportService->generateReport($user->id, $startDate, $endDate, 'IDR');
+            
+            $filename = "Laporan_{$period['name']}_" . now()->format('Y-m-d') . ".xlsx";
+            $filepath = "exports/{$user->id}/" . uniqid() . ".xlsx";
+            
+            // Combine both currency reports
+            $combinedData = [
+                'transactions' => $reportDataJPY['transactions']->concat($reportDataIDR['transactions'])->sortByDesc('date')->values(),
+                'assets' => $reportDataJPY['assets']->concat($reportDataIDR['assets']),
+                'totals' => [
+                    'total_income' => $reportDataJPY['totals']['total_income'] + $reportDataIDR['totals']['total_income'],
+                    'total_expense' => $reportDataJPY['totals']['total_expense'] + $reportDataIDR['totals']['total_expense'],
+                    'balance' => $reportDataJPY['totals']['balance'] + $reportDataIDR['totals']['balance'],
+                ],
+                'period' => $reportDataJPY['period'],
+                'currency' => 'ALL',
+            ];
+            
+            $export = new \App\Exports\FinancialReportExport($combinedData);
+            \Maatwebsite\Excel\Facades\Excel::store($export, $filepath, 'local');
+            
+            // Create export record for download link
+            $token = \Illuminate\Support\Str::uuid();
+            \App\Models\Export::create([
+                'user_id' => $user->id,
+                'token' => $token,
+                'filename' => $filename,
+                'filepath' => $filepath,
+                'period' => $period['name'],
+                'expires_at' => now()->addHours(24),
+            ]);
+            
+            // Send file directly via WhatsApp
+            $this->sendDocument($from, $filepath, $filename);
+            
+        } catch (\Exception $e) {
+            \Log::error('Export failed', ['error' => $e->getMessage()]);
+            $this->sendMessage($from, "❌ Gagal membuat laporan.");
+        }
+        
+        return true;
+    }
+
+    private function handleAssetCreationFlow(string $text, User $user, string $from, string $step, array $data): bool
+    {
+        $choice = trim($text);
+        
+        if ($step === 'asset_creation_type') {
+            $types = ['1' => 'tabungan', '2' => 'e-money', '3' => 'investasi', '4' => 'cash'];
+            if (!isset($types[$choice])) {
+                $this->sendMessage($from, "❌ Pilihan tidak valid. Ketik angka 1-4");
+                return true;
+            }
+            $data['type'] = $types[$choice];
+            ConversationState::set($from, 'asset_creation_country', $data);
+            $this->sendMessage($from, "Negara?\n\n1. Jepang (JPY)\n2. Indonesia (IDR)");
+            return true;
+        }
+        
+        if ($step === 'asset_creation_country') {
+            $countries = ['1' => ['country' => 'JP', 'currency' => 'JPY'], '2' => ['country' => 'ID', 'currency' => 'IDR']];
+            if (!isset($countries[$choice])) {
+                $this->sendMessage($from, "❌ Pilihan tidak valid.");
+                return true;
+            }
+            $data = array_merge($data, $countries[$choice]);
+            ConversationState::set($from, 'asset_creation_name', $data);
+            $this->sendMessage($from, "Nama aset?");
+            return true;
+        }
+        
+        if ($step === 'asset_creation_name') {
+            $data['name'] = $text;
+            ConversationState::set($from, 'asset_creation_balance', $data);
+            $this->sendMessage($from, "Saldo awal?");
+            return true;
+        }
+        
+        if ($step === 'asset_creation_balance') {
+            $balance = preg_replace('/[^0-9]/', '', $text);
+            if (empty($balance)) {
+                $this->sendMessage($from, "❌ Saldo tidak valid.");
+                return true;
+            }
+            
+            \App\Models\Asset::create([
+                'owner_id' => $user->id,
+                'name' => $data['name'],
+                'type' => $data['type'],
+                'country' => $data['country'],
+                'currency' => $data['currency'],
+                'balance' => $balance,
+            ]);
+            
+            ConversationState::clear($from);
+            $currencySymbol = $data['currency'] === 'JPY' ? '¥' : 'Rp';
+            $this->sendMessage($from, "✅ Aset *{$data['name']}* berhasil ditambahkan dengan saldo {$currencySymbol}" . number_format($balance, 0, ',', '.'));
+            return true;
+        }
+        
+        return false;
+    }
+
+    private function handleAssetEditFlow(string $text, User $user, string $from, string $step, array $data): bool
+    {
+        if ($step === 'asset_edit_choice') {
+            $choice = trim($text);
+            if ($choice === '3') {
+                ConversationState::clear($from);
+                $this->sendMessage($from, "✅ Dibatalkan.");
+                return true;
+            }
+            if (!in_array($choice, ['1', '2'])) {
+                $this->sendMessage($from, "❌ Pilihan tidak valid.");
+                return true;
+            }
+            if ($choice === '1') {
+                ConversationState::set($from, 'asset_edit_name', $data);
+                $this->sendMessage($from, "Nama baru?");
+            } else {
+                ConversationState::set($from, 'asset_edit_balance', $data);
+                $this->sendMessage($from, "Saldo baru?");
+            }
+            return true;
+        }
+        
+        if ($step === 'asset_edit_name') {
+            $asset = \App\Models\Asset::find($data['asset_id']);
+            if ($asset && $asset->owner_id === $user->id) {
+                $asset->update(['name' => $text]);
+                ConversationState::clear($from);
+                $this->sendMessage($from, "✅ Nama aset diubah menjadi *{$text}*");
+            }
+            return true;
+        }
+        
+        if ($step === 'asset_edit_balance') {
+            $balance = preg_replace('/[^0-9]/', '', $text);
+            $asset = \App\Models\Asset::find($data['asset_id']);
+            if ($asset && $asset->owner_id === $user->id) {
+                $asset->update(['balance' => $balance]);
+                ConversationState::clear($from);
+                $currencySymbol = $asset->currency === 'JPY' ? '¥' : 'Rp';
+                $this->sendMessage($from, "✅ Saldo diubah menjadi {$currencySymbol}" . number_format($balance, 0, ',', '.'));
+            }
+            return true;
+        }
+        
+        return false;
+    }
+
+    private function handleAssetDeleteConfirm(string $text, User $user, string $from, array $data): bool
+    {
+        if (!in_array(strtolower(trim($text)), ['ya', 'yes', 'y'])) {
+            ConversationState::clear($from);
+            $this->sendMessage($from, "✅ Dibatalkan.");
+            return true;
+        }
+        
+        $asset = \App\Models\Asset::find($data['asset_id']);
+        if ($asset && $asset->owner_id === $user->id) {
+            $name = $asset->name;
+            $asset->delete();
+            ConversationState::clear($from);
+            $this->sendMessage($from, "✅ Aset *{$name}* berhasil dihapus");
+        }
+        return true;
+    }
+
+    private function handlePrimaryWalletFlow(string $text, User $user, string $from, string $step, array $data): bool
+    {
+        ConversationState::clear($from);
+        $this->sendMessage($from, "Fitur ini sedang dalam pengembangan.");
+        return true;
     }
 }
