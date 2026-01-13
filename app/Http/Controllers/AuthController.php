@@ -45,12 +45,12 @@ class AuthController extends Controller
             $token = $user->createToken('auth_token')->plainTextToken;
 
             // Redirect to frontend with token
-            $frontendUrl = env('FRONTEND_URL', 'http://localhost:3000');
+            $frontendUrl = env('FRONTEND_URL', 'https://kanemane.com');
             return redirect()->away("{$frontendUrl}/auth/callback?token={$token}");
 
         } catch (\Exception $e) {
             // Redirect to frontend with error
-            $frontendUrl = env('FRONTEND_URL', 'http://localhost:3000');
+            $frontendUrl = env('FRONTEND_URL', 'https://kanemane.com');
             return redirect()->away("{$frontendUrl}?error=auth_failed");
         }
     }
