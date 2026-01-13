@@ -1202,6 +1202,28 @@ class WhatsAppService
             $asset = Asset::find($pending['asset_id']);
             $parsed = $pending['parsed'];
             
+            // Validate user exists
+            if (!$user) {
+                cache()->forget("pending_transaction_{$from}");
+                $this->sendMessage($from, "❌ User tidak ditemukan. Silakan login ulang.");
+                return;
+            }
+            
+            // Validate asset exists
+            if (!$asset) {
+                cache()->forget("pending_transaction_{$from}");
+                
+                // Show available assets to help user
+                $assets = $user->personalAssets()->get();
+                if ($assets->isEmpty()) {
+                    $this->sendMessage($from, "❌ Asset tidak ditemukan. Silakan buat asset terlebih dahulu di kanemane.com/assets");
+                } else {
+                    $assetList = $this->formatAssetList($user);
+                    $this->sendMessage($from, "❌ Asset tidak ditemukan.\n\nAsset Anda:\n{$assetList}\n\nSilakan coba lagi.");
+                }
+                return;
+            }
+            
             // Override currency with asset currency to ensure consistency
             $parsed['currency'] = $asset->currency;
             
@@ -1270,12 +1292,20 @@ class WhatsAppService
      */
     private function handlePendingAction(string $text, User $user, string $from): bool
     {
+        Log::debug('WAHA: handlePendingAction called', [
+            'text' => $text,
+            'user_id' => $user->id,
+            'from' => $from
+        ]);
+        
         // Check for conversation state
         if (ConversationState::hasActive($from)) {
+            Log::debug('WAHA: ConversationState is active, delegating to handleConversationState');
             return $this->handleConversationState($text, $user, $from);
         }
         
         $normalizedText = strtolower(trim($text));
+        Log::debug('WAHA: Normalized text', ['normalized' => $normalizedText]);
 
         
         // Check for receipt confirmation
