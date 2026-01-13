@@ -286,29 +286,11 @@ class WhatsAppService
     }
 
     /**
-     * Generate onboarding URL for new user
+     * Get onboarding path
      */
-    private function generateOnboardingUrl(string $phone): string
+    private function getOnboardingPath(): string
     {
-        try {
-            $response = Http::post(config('app.url') . '/api/onboarding/generate-token', [
-                'phone' => $phone
-            ]);
-            
-            if ($response->successful()) {
-                $data = $response->json();
-                return $data['url'] ?? config('app.frontend_url') . '/onboarding';
-            }
-            
-            return config('app.frontend_url') . '/onboarding';
-        } catch (\Exception $e) {
-            Log::error('Failed to generate onboarding URL', [
-                'error' => $e->getMessage(),
-                'phone' => $phone
-            ]);
-            
-            return config('app.frontend_url') . '/onboarding';
-        }
+        return '/onboarding';
     }
 
     /**
@@ -407,25 +389,26 @@ class WhatsAppService
 
         if (!$user) {
             // User not registered - send onboarding link
-            $onboardingUrl = $this->generateOnboardingUrl($normalizedPhone);
-            $this->sendMessage($from, "Halo! 👋\n\nNomor kamu sepertinya belum terdaftar nih.\n\nDaftarin di sini ya:\n{$onboardingUrl}");
+            $onboardingPath = $this->getOnboardingPath();
+            $this->sendMessage($from, "Halo! 👋\n\nNomor kamu sepertinya belum terdaftar nih.\n\nDaftarin di sini ya:\n{$onboardingPath}");
             return;
         }
 
         // Check if user has completed onboarding
         $hasAssets = $user->personalAssets()->exists();
-        $hasPrimaryAsset = $user->primary_asset_jpy_id !== null || $user->primary_asset_idr_id !== null;
+        $hasPrimaryAsset = $user->primary_asset_jpy_id !== null || 
+                          $user->primary_asset_idr_id !== null || 
+                          $user->primary_asset_id !== null;
 
         if (!$hasAssets || !$hasPrimaryAsset) {
-            $onboardingUrl = config('app.frontend_url') . '/onboarding';
-            $this->sendMessage($from, "Halo {$user->name}! 👋\n\nKamu belum menyelesaikan setup awal nih.\n\nYuk lengkapi di sini:\n{$onboardingUrl}");
+            $onboardingPath = '/onboarding';
+            $this->sendMessage($from, "Halo {$user->name}! 👋\n\nKamu belum menyelesaikan setup awal nih.\n\nYuk lengkapi di sini:\n{$onboardingPath}");
             return;
         }
 
         // Check if user has Pro subscription for WhatsApp integration
         if (!$user->canAccessFeature('whatsapp')) {
             $tier = $user->getSubscriptionTier();
-            $upgradeUrl = config('app.frontend_url') . '/subscription';
             
             $message = "🔒 *Fitur Pro Diperlukan*\n\n";
             $message .= "Integrasi WhatsApp hanya tersedia untuk pengguna Pro.\n\n";
@@ -435,7 +418,7 @@ class WhatsAppService
             $message .= "✅ Scan Resi\n";
             $message .= "✅ Export Laporan\n";
             $message .= "✅ AI Parsing\n\n";
-            $message .= "Upgrade di: {$upgradeUrl}";
+            $message .= "Upgrade di: /subscription";
             
             $this->sendMessage($from, $message);
             return;
@@ -718,7 +701,7 @@ class WhatsAppService
         }
         
         $message .= "\nUntuk mengganti dompet utama, silakan buka:\n";
-        $message .= config('app.frontend_url') . '/dashboard/assets';
+        $message .= '/dashboard/assets';
         
         $this->sendMessage($from, $message);
     }
