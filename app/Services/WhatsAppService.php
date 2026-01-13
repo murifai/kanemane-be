@@ -297,7 +297,7 @@ class WhatsAppService
      */
     private function getOnboardingPath(): string
     {
-        return '/onboarding';
+        return 'kanemane.com/onboarding';
     }
 
     /**
@@ -444,9 +444,8 @@ class WhatsAppService
         $user = $this->findUser($normalizedPhone);
 
         if (!$user) {
-            // User not registered - send onboarding link with debug info
-            $onboardingPath = $this->getOnboardingPath();
-            $this->sendMessage($from, "Halo! 👋\n\nNomor kamu ({$normalizedPhone}) sepertinya belum terdaftar nih.\n\nDaftarin di sini ya:\n{$onboardingPath}");
+            $message = "Halo! 👋\n\nNomor kamu ({$normalizedPhone}) sepertinya belum terdaftar nih.\n\nDaftarin di sini ya:\n{$onboardingPath}";
+            $this->sendMessage($from, $message);
             return;
         }
 
@@ -457,7 +456,7 @@ class WhatsAppService
                           $user->primary_asset_id !== null;
 
         if (!$hasAssets || !$hasPrimaryAsset) {
-            $onboardingPath = '/onboarding';
+            $onboardingPath = 'kanemane.com/onboarding';
             $this->sendMessage($from, "Halo {$user->name}! 👋\n\nKamu belum menyelesaikan setup awal nih.\n\nYuk lengkapi di sini:\n{$onboardingPath}");
             return;
         }
@@ -468,13 +467,13 @@ class WhatsAppService
             
             $message = "🔒 *Fitur Pro Diperlukan*\n\n";
             $message .= "Integrasi WhatsApp hanya tersedia untuk pengguna Pro.\n\n";
-            $message .= "Anda saat ini menggunakan paket {$tier}.\n\n";
+            $message .= "Kamu saat ini menggunakan paket {$tier}.\n\n";
             $message .= "Upgrade ke Pro untuk:\n";
-            $message .= "✅ Integrasi WhatsApp\n";
+            $message .= "✅ Catat pengeluaran dan pemasukan di WA\n";
             $message .= "✅ Scan Resi\n";
-            $message .= "✅ Export Laporan\n";
-            $message .= "✅ AI Parsing\n\n";
-            $message .= "Upgrade di: /subscription";
+            $message .= "✅ Laporan Keuangan Excel\n";
+            $message .= "✅ Unlimited Aset\n\n";
+            $message .= "Upgrade di: kanemane.com/subscription";
             
             $this->sendMessage($from, $message);
             return;
@@ -547,7 +546,7 @@ class WhatsAppService
         }
 
          // Check for transaction history command
-        if ($lowerText === 'riwayat' || $lowerText === 'history') {
+        if ($lowerText === '/riwayat' || $lowerText === '/history' || $lowerText === 'riwayat' || $lowerText === 'history') {
             $this->handleHistoryCommand($user, $from);
             return;
         }
@@ -566,7 +565,7 @@ class WhatsAppService
         }
 
         // Check for export command
-        if ($lowerText === '/export' || $lowerText === 'export') {
+        if ($lowerText === '/laporan' || $lowerText === 'report') {
             $this->handleExportCommand($user, $from);
             return;
         }
@@ -618,7 +617,7 @@ class WhatsAppService
         $assets = $user->personalAssets()->get();
         
         if ($assets->isEmpty()) {
-            $this->sendMessage($from, "❌ Anda belum memiliki asset.\n\nSilakan buat asset di kanemane.com terlebih dahulu.");
+            $this->sendMessage($from, "❌ Anda belum memiliki asset.\n\nSilakan buat asset di kanemane.com/assets terlebih dahulu.");
             return;
         }
         
@@ -727,6 +726,29 @@ class WhatsAppService
     }
 
     /**
+     * Format list of user assets for display
+     */
+    private function formatAssetList(User $user): string
+    {
+        $assets = $user->personalAssets()->orderBy('currency')->get();
+        if ($assets->isEmpty()) {
+            return "Anda belum memiliki asset.";
+        }
+
+        $list = "";
+        foreach ($assets as $a) {
+             $currencySymbol = match($a->currency) {
+                'JPY' => '¥',
+                'IDR' => 'Rp',
+                'USD' => '$',
+                default => $a->currency . ' '
+            };
+            $list .= "• {$a->name}: {$currencySymbol}" . number_format($a->balance, 0, ',', '.') . "\n";
+        }
+        return $list;
+    }
+
+    /**
      * Handle wallet management command
      */
     private function handleWalletCommand(User $user, string $from): void
@@ -734,7 +756,7 @@ class WhatsAppService
         $assets = $user->personalAssets()->get();
         
         if ($assets->isEmpty()) {
-            $this->sendMessage($from, "❌ Anda belum memiliki asset.\n\nSilakan buat asset di kanemane.com terlebih dahulu.");
+            $this->sendMessage($from, "❌ Anda belum memiliki asset.\n\nSilakan buat asset di kanemane.com/assets terlebih dahulu.");
             return;
         }
         
@@ -757,7 +779,7 @@ class WhatsAppService
         }
         
         $message .= "\nUntuk mengganti dompet utama, silakan buka:\n";
-        $message .= '/dashboard/assets';
+        $message .= 'kanemane.com/dashboard/assets';
         
         $this->sendMessage($from, $message);
     }
@@ -790,6 +812,13 @@ class WhatsAppService
             $asset = $user->personalAssets()
                 ->whereRaw('LOWER(name) = ?', [strtolower($parsed['asset_name'])])
                 ->first();
+            
+            // Explicit asset name provided but not found
+            if (!$asset) {
+                $assetList = $this->formatAssetList($user);
+                $this->sendMessage($from, "❌ Asset '{$parsed['asset_name']}' tidak ditemukan.\n\nDaftar asset Anda:\n{$assetList}");
+                return;
+            }
         }
         
         // If asset not found by name, try to find by currency if explicitly mentioned
@@ -814,7 +843,24 @@ class WhatsAppService
         }
         
         if (!$asset) {
-            $this->sendMessage($from, "❌ Tidak dapat menentukan asset untuk transaksi ini.\n\nSilakan set dompet utama dengan perintah /dompet");
+            $assetList = $this->formatAssetList($user);
+            $this->sendMessage($from, "❌ Tidak dapat menentukan asset untuk transaksi ini.\n\nSilakan set dompet utama dengan perintah /dompet\n\nAtau gunakan asset berikut:\n{$assetList}");
+            return;
+        }
+
+        // Check for insufficient balance (Expense only)
+        if (($parsed['type'] === 'expense' || $parsed['type'] === 'pengeluaran') && $asset->balance < $parsed['amount']) {
+             $currencySymbol = match($asset->currency) {
+                'JPY' => '¥',
+                'IDR' => 'Rp',
+                'USD' => '$',
+                default => $asset->currency . ' '
+            };
+            
+            $formattedBalance = number_format($asset->balance, 0, ',', '.');
+            $formattedAmount = number_format($parsed['amount'], 0, ',', '.');
+            
+            $this->sendMessage($from, "❌ *Saldo Tidak Cukup!*\n\nAsset: {$asset->name}\nSaldo: {$currencySymbol}{$formattedBalance}\nTransaksi: {$currencySymbol}{$formattedAmount}\n\nMohon kurangi jumlah atau pilih asset lain.");
             return;
         }
 
@@ -959,14 +1005,14 @@ class WhatsAppService
         $helpText = "📱 *Panduan Kanemane WhatsApp Bot*\n\n" .
                     "Cara mencatat transaksi:\n" .
                     "• Kirim teks: \"makan 850\" atau \"gajian 5000000\"\n" .
-                    "• Sebutkan asset: \"jajan 500 pake PayPay\"\n" .
+                    "• Sebutkan asset: \"jajan 500 pake PayPay\" \"gajian 5000000 ke yuucho\"\n" .
                     "• Atau foto struk belanja\n\n" .
                     "Perintah:\n" .
                     "• saldo - Cek semua saldo\n" .
                     "• saldo [nama asset] - Cek saldo spesifik\n" .
                     "• saldo JPY - Cek total saldo JPY\n" .
                     "• /dompet - Kelola dompet utama\n" .
-                    "• help - Panduan ini";
+                    "• help - Panduan WA Kanemane";
         $this->sendMessage($from, $helpText);
     }
 
@@ -991,7 +1037,7 @@ class WhatsAppService
                 Log::error('WAHA: No mediaUrl in message payload', [
                     'message_id' => $message['id']
                 ]);
-                $this->sendMessage($from, "❌ Gagal mengunduh gambar. Silakan coba lagi.");
+                $this->sendMessage($from, "❌ Gagal memproses gambar. Silakan coba lagi.");
                 return;
             }
             
@@ -999,7 +1045,7 @@ class WhatsAppService
             $tempPath = $this->downloadMedia($mediaUrl);
 
             if (!$tempPath) {
-                $this->sendMessage($from, "❌ Gagal mengunduh gambar. Silakan coba lagi.");
+                $this->sendMessage($from, "❌ Gagal memproses gambar. Silakan coba lagi.");
                 return;
             }
 
