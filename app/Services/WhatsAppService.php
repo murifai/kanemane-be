@@ -474,7 +474,7 @@ class WhatsAppService
             $message .= "✅ Scan Resi\n";
             $message .= "✅ Laporan Keuangan Excel\n";
             $message .= "✅ Unlimited Aset\n\n";
-            $message .= "Upgrade di: kanemane.com/subscription";
+            $message .= "Upgrade di: kanemane.com/dashboard/profile";
             
             $this->sendMessage($from, $message);
             return;
@@ -618,7 +618,7 @@ class WhatsAppService
         $assets = $user->personalAssets()->get();
         
         if ($assets->isEmpty()) {
-            $this->sendMessage($from, "❌ Anda belum memiliki asset.\n\nSilakan buat asset di kanemane.com/assets terlebih dahulu.");
+            $this->sendMessage($from, "❌ Anda belum memiliki asset.\n\nSilakan buat asset di kanemane.com/dashboard/assets terlebih dahulu.");
             return;
         }
         
@@ -757,7 +757,7 @@ class WhatsAppService
         $assets = $user->personalAssets()->get();
         
         if ($assets->isEmpty()) {
-            $this->sendMessage($from, "❌ Anda belum memiliki asset.\n\nSilakan buat asset di kanemane.com/assets terlebih dahulu.");
+            $this->sendMessage($from, "❌ Anda belum memiliki asset.\n\nSilakan buat asset di kanemane.com/dashboard/assets terlebih dahulu.");
             return;
         }
         
@@ -1013,6 +1013,12 @@ class WhatsAppService
                     "• saldo [nama asset] - Cek saldo spesifik\n" .
                     "• saldo JPY - Cek total saldo JPY\n" .
                     "• /dompet - Kelola dompet utama\n" .
+                    "• /riwayat - Lihat riwayat transaksi\n" .
+                    "• /ringkasan - Lihat ringkasan keuangan\n" .
+                    "• /laporan - Export laporan keuangan\n" .
+                    "• /tambah aset - Tambah aset baru\n" .
+                    "• /edit aset [nama] - Edit aset\n" .
+                    "• /hapus aset [nama] - Hapus aset\n" .
                     "• help - Panduan WA Kanemane";
         $this->sendMessage($from, $helpText);
     }
@@ -1216,7 +1222,7 @@ class WhatsAppService
                 // Show available assets to help user
                 $assets = $user->personalAssets()->get();
                 if ($assets->isEmpty()) {
-                    $this->sendMessage($from, "❌ Asset tidak ditemukan. Silakan buat asset terlebih dahulu di kanemane.com/assets");
+                    $this->sendMessage($from, "❌ Asset tidak ditemukan. Silakan buat asset terlebih dahulu di kanemane.com/dashboard/assets");
                 } else {
                     $assetList = $this->formatAssetList($user);
                     $this->sendMessage($from, "❌ Asset tidak ditemukan.\n\nAsset Anda:\n{$assetList}\n\nSilakan coba lagi.");
@@ -1407,7 +1413,7 @@ class WhatsAppService
             $num++;
         }
 
-        $message .= "\nLihat lebih: " . config('app.frontend_url') . "/dashboard/transactions";
+        $message .= "\nLihat lebih detail di kanemane.com/dashboard/transactions";
         $this->sendMessage($from, $message);
     }
 
@@ -1497,7 +1503,7 @@ class WhatsAppService
             $message .= "\n🏆 *Kategori Terbesar:* {$topCategory->category}";
         }
         
-        $message .= "\n\nDetail: " . config('app.frontend_url') . "/dashboard";
+        $message .= "\n\nDetail: kanemane.com/dashboard";
         $this->sendMessage($from, $message);
     }
 
