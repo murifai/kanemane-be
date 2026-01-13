@@ -936,7 +936,7 @@ class WhatsAppService
                 'category' => $parsed['category'],
                 'amount' => $parsed['amount'],
                 'currency' => $asset->currency,
-                'date' => now(),
+                'date' => now()->toDateString(), // Use date only, not datetime
                 'note' => $parsed['description'],
                 'created_by' => $user->id,
             ]);
@@ -970,7 +970,7 @@ class WhatsAppService
                 'category' => $parsed['category'],
                 'amount' => $parsed['amount'],
                 'currency' => $asset->currency,
-                'date' => now(),
+                'date' => now()->toDateString(), // Use date only, not datetime
                 'note' => $parsed['description'],
                 'created_by' => $user->id,
             ]);
