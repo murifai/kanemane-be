@@ -23,12 +23,6 @@ class PaymentWebhookController extends Controller
         $receivedSignature = $request->header('X-Lynk-Signature');
         $merchantKey = env('LYNK_MERCHANT_KEY');
 
-        Log::info('Lynk Config Debug', [
-            'has_key' => !empty($merchantKey),
-            'key_length' => strlen($merchantKey ?? ''),
-            'env_val' => env('LYNK_MERCHANT_KEY') ? 'exists' : 'missing'
-        ]);
-
         if (!$merchantKey) {
             Log::error('Lynk Webhook: LYNK_MERCHANT_KEY not configured');
             return response()->json(['message' => 'Server configuration error'], 500);
