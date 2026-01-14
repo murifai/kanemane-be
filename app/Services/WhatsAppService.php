@@ -591,6 +591,12 @@ class WhatsAppService
             return;
         }
 
+        // Check for feedback command
+        if ($lowerText === '/feedback' || $lowerText === 'feedback') {
+            $this->handleFeedbackCommand($user, $from);
+            return;
+        }
+
         if ($lowerText === 'help' || $lowerText === 'bantuan') {
             $this->sendHelpMessage($from);
             return;
@@ -1019,8 +1025,23 @@ class WhatsAppService
                     "• /tambah aset - Tambah aset baru\n" .
                     "• /edit aset [nama] - Edit aset\n" .
                     "• /hapus aset [nama] - Hapus aset\n" .
+                    "• /feedback - Kirim feedback & dapatkan voucher\n" .
                     "• help - Panduan WA Kanemane";
         $this->sendMessage($from, $helpText);
+    }
+
+    /**
+     * Handle feedback command
+     */
+    private function handleFeedbackCommand(User $user, string $from): void
+    {
+        $message = "💬 *Feedback Kanemane*\n\n" .
+                   "Kami ingin mendengar pendapat kamu!\n\n" .
+                   "Isi feedback di sini:\n" .
+                   "https://forms.gle/9kCa7V3g7dgkCzbe7\n\n" .
+                   "🎁 *Dapatkan voucher 20% untuk bulan selanjutnya!*";
+        
+        $this->sendMessage($from, $message);
     }
 
     /**
